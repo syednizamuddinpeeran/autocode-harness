@@ -26,11 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "sessionStart"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" sessionStart",
             "timeout": 10
           }
         ]
@@ -41,11 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "userPromptSubmitted"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" userPromptSubmitted",
             "timeout": 10
           }
         ]
@@ -56,11 +48,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/guard.sh"
-            ],
-            "timeout": 15,
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/guard.sh\"",
+            "timeout": 30,
             "onFailure": "block"
           }
         ]
@@ -71,11 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "postToolUse"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" postToolUse",
             "timeout": 10
           }
         ]
@@ -86,11 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "postToolUseFailure"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" postToolUseFailure",
             "timeout": 10
           }
         ]
@@ -101,11 +82,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "subagentStart"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" subagentStart",
             "timeout": 10
           }
         ]
@@ -116,11 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "subagentStop"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" subagentStop",
             "timeout": 10
           }
         ]
@@ -131,11 +104,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "preCompact"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" preCompact",
             "timeout": 10
           }
         ]
@@ -146,11 +115,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "errorOccurred"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" errorOccurred",
             "timeout": 10
           }
         ]
@@ -161,11 +126,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh",
-              "sessionEnd"
-            ],
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/log.sh\" sessionEnd",
             "timeout": 10
           }
         ]

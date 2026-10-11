@@ -24,6 +24,8 @@
 | CI `guardrails-unchanged` fails | Agent PR touched hooks, workflows, `check.sh`, `commands.env`, `complexity.env` or the check scripts | Make that change yourself in a separate PR; revert it from the agent PR |
 | PR is Draft | High risk, failed verification, or open questions | Read Risks and questions; refine the issue and rerun |
 | Hooks seem not to run | Not in the repo/worktree where Copilot starts, or scripts not executable | Run `scripts/factory/setup.sh`; confirm `.github/hooks/factory.json` is on the branch the agent uses |
+| Claude Code on Windows: every tool call fails with `PreToolUse:Bash hook error: [bash …]: timed out; blocking because onFailure is "block"` or `/bin/bash: E:OneDrive…/guard.sh: No such file or directory` | A hook in exec form (`"command": "bash"` plus `args`) started WSL's `bash.exe` instead of Git Bash | Use shell form with a quoted path, or `pwsh` for `--os windows` ([claude-code.md](claude-code.md#hooks-on-native-windows)); while you fix it, turn the hooks off with `/hooks` or a gitignored `.claude/settings.local.json` |
+| `factory guard: jq not found on PATH` (every tool call blocked) | `jq` missing for the bash hooks | `winget install jqlang.jq` (Windows) or your package manager, then restart the session |
 | Hook slow → a call slipped through | Timeout is fail-open | Keep policy files small; avoid heavy work in hooks |
 | Sandbox blocks a legitimate write | Path outside allowed dirs | Add the path in `/sandbox config` → Filesystem, or move work inside the worktree |
 | `/sandbox` says unavailable on Linux/WSL | Missing `bwrap` (≥ 0.5.0), `slirp4netns` or other requirements | Install them; see [sandboxing.md](sandboxing.md#platform-requirements) |

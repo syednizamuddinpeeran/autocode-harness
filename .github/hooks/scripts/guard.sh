@@ -10,20 +10,51 @@
 #   allow -> print nothing (fall through to normal permissions)
 # A crash exits non-zero, which denies the call (Copilot: any non-zero; Claude Code: exit 2, or any
 # failure with onFailure "block"). A Copilot hook timeout ALLOWS the call, so keep this script fast.
+#
+# Speed: every external process costs 0.5-1 s on some Windows machines (Git Bash process creation
+# plus antivirus scanning), so the allow path starts as few as possible: git x2, jq x2, grep, sed.
+# Policy files are read with bash builtins, one jq call parses the payload, and one grep checks all
+# patterns; the per-pattern loop only runs to name the pattern that matched.
 set -uo pipefail
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+here="${BASH_SOURCE[0]%/*}"; [[ "$here" == "${BASH_SOURCE[0]}" ]] && here=.; here="${here:-/}"
 # shellcheck source=common.sh
 source "$here/common.sh"
 
+command -v jq >/dev/null 2>&1 || {
+  echo "factory guard: jq not found on PATH; every tool call is blocked until it is installed (Windows: winget install jqlang.jq, then restart the session). See docs/troubleshooting.md." >&2
+  exit 2
+}
+
 root="$(factory_root)"
+_factory_root="$root"   # reused by factory_log, saves a git call
 policy_dir="${FACTORY_POLICY_DIR:-$root/.github/hooks/policy}"
 
-payload="$(cat)"
+IFS= read -r -d '' payload || true
 factory_context
 
-tool="$(jq -r '.toolName // .tool_name // ""' <<<"$payload")" || exit 2
-format="$(jq -r 'if has("toolName") or has("toolArgs") then "copilot" elif has("tool_name") or has("tool_input") or has("hook_event_name") then "claude" else "copilot" end' <<<"$payload")" || exit 2
-args="$(jq -c '(.toolArgs // .tool_input // {}) | if type == "string" then (fromjson? // {raw: .}) else . end' <<<"$payload")" || exit 2
+# One jq call: tool, payload format, tool args (compact JSON), the shell command with newlines and
+# tabs turned into spaces and runs of spaces squeezed, then any path arguments, one per line.
+parsed="$(jq -r '
+  ((.toolArgs // .tool_input // {}) | if type == "string" then (fromjson? // {raw: .}) else . end) as $a
+  | ((.toolName // .tool_name // "") | tostring | gsub("[\r\n]"; " ")),
+    (if has("toolName") or has("toolArgs") then "copilot"
+     elif has("tool_name") or has("tool_input") or has("hook_event_name") then "claude"
+     else "copilot" end),
+    ($a | tojson),
+    ((if ($a | type) == "object" then ($a | .command // .cmd // .script // .input // .raw // "") else "" end)
+      | (if type == "string" then . else tojson end)
+      | (if . == "" then ($a | tostring) else . end)
+      | (. + "\n") | gsub("[\n\t]"; " ") | gsub(" +"; " ")),
+    ([$a | .. | objects | to_entries[] | select(.key | test("path|file"; "i")) | .value | strings] | .[]),
+    ($a | tostring | [match("\\*\\*\\* (?:Add|Update|Delete) File: ([^\\\\\"]+)"; "g") | .captures[0].string] | .[])
+' <<<"$payload")" || exit 2
+parsed="${parsed//$'\r\n'/$'\n'}"   # native Windows jq writes CRLF (jq -b would fail on jq 1.6)
+{ IFS= read -r tool; IFS= read -r format; IFS= read -r args; IFS= read -r norm; } <<<"$parsed"
+[[ -n "${format:-}" ]] || exit 2
+path_args="$parsed"   # lines 5+ (builtins, no sed)
+for _ in 1 2 3 4; do
+  if [[ "$path_args" == *$'\n'* ]]; then path_args="${path_args#*$'\n'}"; else path_args=""; fi
+done
 
 deny() {
   local reason="$1"
@@ -43,28 +74,58 @@ allow() {
   exit 0
 }
 
-# Git branch rules for this repo type: policy/git-rules.env (KEY="value" lines, not sourced).
-git_rule() { sed -nE "s/^$1=\"?([^\"]*)\"?[[:space:]]*$/\1/p" "$policy_dir/git-rules.env" 2>/dev/null | tail -1; }
-branch_prefixes="${FACTORY_BRANCH_PREFIXES:-$(git_rule BRANCH_PREFIXES)}"
-branch_prefixes="${branch_prefixes:-agent/}"
-branch_only_git="$(git_rule BRANCH_ONLY_GIT)"
-push_current_only="$(git_rule PUSH_CURRENT_BRANCH_ONLY)"
+# Lines of a policy file into the global array PATTERNS, skipping comments/blank lines. Builtins only
+# (bash 3.2 safe); strips the CR that a Windows (core.autocrlf) checkout adds, which would otherwise
+# stop every pattern matching.
+read_patterns() { # read_patterns <file>
+  local line
+  PATTERNS=()
+  [[ -f "$1" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    PATTERNS+=("$line")
+  done < "$1"
+}
 
-# Read regex lines from a policy file, skipping comments/blank lines.
-patterns() { [[ -f "$1" ]] && grep -Ev '^\s*(#|$)' "$1" || true; }
+# Git branch rules for this repo type: policy/git-rules.env (KEY="value" lines, not sourced; last wins).
+branch_prefixes="" branch_only_git="" push_current_only=""
+if [[ -f "$policy_dir/git-rules.env" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^(BRANCH_PREFIXES|BRANCH_ONLY_GIT|PUSH_CURRENT_BRANCH_ONLY)=\"?([^\"]*)\"?[[:space:]]*$ ]] || continue
+    case "${BASH_REMATCH[1]}" in
+      BRANCH_PREFIXES) branch_prefixes="${BASH_REMATCH[2]}" ;;
+      BRANCH_ONLY_GIT) branch_only_git="${BASH_REMATCH[2]}" ;;
+      PUSH_CURRENT_BRANCH_ONLY) push_current_only="${BASH_REMATCH[2]}" ;;
+    esac
+  done < "$policy_dir/git-rules.env"
+fi
+branch_prefixes="${FACTORY_BRANCH_PREFIXES:-$branch_prefixes}"
+branch_prefixes="${branch_prefixes:-agent/}"
+
+# Does any of the patterns match the text? One grep for all of them; exit 2 (a broken pattern) is
+# treated as "maybe", so the per-pattern loop still checks every valid pattern.
+any_match() { # any_match <grep-flags> <text> <pattern>...
+  local flags="$1" text="$2" p rc; shift 2
+  local e=()
+  for p in "$@"; do e+=(-e "$p"); done
+  [[ ${#e[@]} -eq 0 ]] && return 1
+  grep "$flags" "${e[@]}" <<<"$text" >/dev/null 2>&1; rc=$?
+  [[ $rc -ne 1 ]]
+}
 
 # ---------- shell commands ----------
 check_shell() {
-  local cmd norm pat
-  cmd="$(jq -r '.command // .cmd // .script // .input // .raw // empty' <<<"$args")"
-  [[ -z "$cmd" ]] && cmd="$(jq -r 'tostring' <<<"$args")"
-  norm="$(tr '\n\t' '  ' <<<"$cmd" | tr -s ' ')"
-
-  while IFS= read -r pat; do
-    if grep -Eiq -- "$pat" <<<"$norm"; then
-      deny "command matches denied pattern [$pat]"
-    fi
-  done < <(patterns "$policy_dir/deny-commands.txt")
+  local pat
+  read_patterns "$policy_dir/deny-commands.txt"
+  if any_match -Ei "$norm" ${PATTERNS[@]+"${PATTERNS[@]}"}; then
+    for pat in "${PATTERNS[@]}"; do
+      if grep -Eiq -- "$pat" <<<"$norm"; then
+        deny "command matches denied pattern [$pat]"
+      fi
+    done
+  fi
 
   # Some git subcommands (push, or commit/merge for local repos) only on agent branches.
   local cur ok p refs r
@@ -90,30 +151,28 @@ check_shell() {
 }
 
 # ---------- file tools ----------
-paths_in_args() {
-  jq -r '[.. | objects | to_entries[] | select(.key | test("path|file"; "i")) | .value | strings] | .[]' <<<"$args" 2>/dev/null
-  # apply_patch style headers: "*** Update File: path"
-  jq -r 'tostring' <<<"$args" | grep -oE '\*\*\* (Add|Update|Delete) File: [^\\"]+' | sed -E 's/^\*\*\* (Add|Update|Delete) File: //'
-}
-
 check_paths() {
-  local mode="$1" path rel pat rule
+  local mode="$1" path rel pat rule pats=()
+  read_patterns "$policy_dir/deny-paths.txt"
+  for rule in ${PATTERNS[@]+"${PATTERNS[@]}"}; do
+    if [[ "$rule" == write:* ]]; then
+      [[ "$mode" != "write" ]] && continue
+      pats+=("${rule#write:}")
+    else
+      pats+=("$rule")
+    fi
+  done
   while IFS= read -r path; do
     [[ -z "$path" ]] && continue
     path="${path//\\//}"   # Windows separators
     rel="${path#"$root"/}"; rel="${rel#/workspace/}"; rel="${rel#./}"
-    while IFS= read -r rule; do
-      if [[ "$rule" == write:* ]]; then
-        [[ "$mode" != "write" ]] && continue
-        pat="${rule#write:}"
-      else
-        pat="$rule"
-      fi
+    any_match -E "$rel"$'\n'"$path" ${pats[@]+"${pats[@]}"} || continue
+    for pat in "${pats[@]}"; do
       if grep -Eq -- "$pat" <<<"$rel" || grep -Eq -- "$pat" <<<"$path"; then
         deny "$mode access to '$rel' is not allowed [$pat]"
       fi
-    done < <(patterns "$policy_dir/deny-paths.txt")
-  done < <(paths_in_args)
+    done
+  done <<<"$path_args"
   allow
 }
 
