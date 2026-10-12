@@ -1,0 +1,7 @@
+# Files that bash, shellcheck, grep or the installer read byte for byte must stay LF, also in a
+# Windows checkout with core.autocrlf=true (Git for Windows' default). With CRLF, shellcheck reports
+# SC1017 on every line, and a CR ends up inside patterns, branch names and file names the scripts compare.
+*.sh      text eol=lf
+*.env     text eol=lf
+*.append  text eol=lf
+*.txt     text eol=lf
