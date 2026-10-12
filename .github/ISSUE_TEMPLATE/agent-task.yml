@@ -1,0 +1,36 @@
+name: Agent task
+description: A task written for the factory agent to take from issue to pull request.
+title: "[agent] "
+labels: ["agent-ready"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: The user-visible outcome, in 1–2 sentences.
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable statements. One per line, ideally Given / When / Then.
+      placeholder: |
+        - Given a logged-in user, when they click Export, then a CSV downloads with all visible rows.
+    validations: { required: true }
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What must not change. Write "None" if nothing.
+    validations: { required: true }
+  - type: textarea
+    id: pointers
+    attributes:
+      label: Pointers
+      description: Relevant files, modules, related issues or PRs, examples to follow.
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk
+      options: [low, medium, high]
+    validations: { required: true }
