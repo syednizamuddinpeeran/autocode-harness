@@ -55,6 +55,12 @@ scripts/factory/create-issue.sh .agent-work/drafts/<id>.md      # preview → co
 ```
 It refuses drafts that are not ready (OPEN items, missing sections, placeholders), uses your `gh` credentials, and adds the `agent-ready` label. Agents are denied `new-draft`, `create-issue` and `gh issue` writes by the guard.
 
+**Many clear requirements at once: draft on GitHub, approve there.** Write each as a ready draft, then:
+```bash
+scripts/factory/create-issue.sh --draft .agent-work/drafts/*.md
+```
+All drafts are validated first, then created without prompts and labelled `agent-draft` (not `agent-ready`), so nothing starts. Review and edit the issues on GitHub, then add `agent-ready` to the ones you approve: that is what starts the factory.
+
 **Or write it by hand** with the **Agent task** form: Goal, Acceptance criteria (Given/when/then — make them automatically testable), Out of scope (or "None"), Pointers, Risk. It applies the `agent-ready` label.
 
 The factory never guesses requirements:
