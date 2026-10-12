@@ -10,7 +10,7 @@ The agent is guarded, not trusted. These are the things only you can do.
 - [ ] (Local runs) Copilot CLI sandbox is on (`/sandbox status`), `/sandbox policy` grants no `~/.ssh` or `~/.aws`, and **Allow sandbox bypass** is off. See [sandboxing.md](sandboxing.md).
 
 ## Before a run
-- [ ] You created the issue or task yourself (`create-issue` / `create-task` or by hand) and read the whole draft first, including *Decisions made while drafting*.
+- [ ] You created the issue or task yourself (`create-issue` / `create-task` or by hand) and read the whole draft first, including *Decisions made while drafting*. Issues made with `create-issue --draft` are created without a prompt: read each one on GitHub before adding `agent-ready`, which is what starts an agent.
 - [ ] Base branch has the guardrails (`.github/`, `scripts/factory/`, `AGENTS.md`) you reviewed.
 - [ ] `bash scripts/factory/test-hooks.sh` (Windows: `pwsh scripts/factory/test-hooks.ps1`) reports 0 failed.
 - [ ] No cloud/prod credentials in your shell environment or `~/.aws` (local runs).

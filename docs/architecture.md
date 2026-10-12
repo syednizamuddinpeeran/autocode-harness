@@ -3,7 +3,7 @@
 ## End-to-end flow
 
 ```
-Issue (agent-task form, label agent-ready)
+Issue (agent-task form, or create-issue --draft → you review → add label agent-ready)
       │
       ├─ cloud: assign to Copilot, pick the factory agent → branch copilot/*
       └─ local: scripts/factory/run-issue.sh <N>

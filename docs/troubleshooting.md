@@ -11,6 +11,7 @@
 | `run-batch` item says "needs you" | That run stopped with questions, a breakdown or an error | Read `.agent-logs/batch/<item>.log`; fix the item, delete its branch/worktree, run the batch again |
 | `run-batch --auto-continue` never ends | It waits for you to merge finished items | Merge them (PR / `accept.sh`), or stop it with Ctrl+C — runs already started keep their worktrees |
 | `new-draft.sh is interactive` | Run without a terminal (CI, pipe) | Run it in a terminal; it asks you questions |
+| `create-issue --draft` created nothing | It validates every draft first and creates none if any is not ready | Fix the draft it names and run again |
 | `create-issue` / `create-task` says not ready | The draft still has `OPEN:` items or empty sections | Answer them (edit the draft or re-run `new-draft --id <id>`, which continues it) |
 | `No checks configured` (exit 3) | All commands empty in `commands.env` | Configure them, or `ALLOW_NO_CHECKS=1` for docs-only repos |
 | Copilot rejects flags | CLI flag names changed | `copilot help permissions`; adjust `run-issue.sh` (human edit) |
