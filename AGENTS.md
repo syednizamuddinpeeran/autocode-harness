@@ -19,9 +19,12 @@ Work on this repo runs under its own guard, independent of the one `install.sh` 
 and `.claude/settings.json` (Claude Code). Tool calls are logged to `.agent-logs/` (not committed).
 
 Requirements: `git` and `jq` everywhere. On Windows, Claude Code runs the hooks through Git Bash
-(Git for Windows) and still needs `jq` (`winget install jqlang.jq`), or the guard blocks every
-tool call; Copilot uses the PowerShell 7 hooks (`guard.ps1`, `log.ps1`). Both guards share the
-same policy files and are tested by `tests/repo-harness.sh`.
+(Git for Windows): `.claude/settings.json` uses shell form with a quoted path
+(`bash "${CLAUDE_PROJECT_DIR}/…"`), never exec form, which would start WSL's `bash.exe`. It still
+needs `jq` (`winget install jqlang.jq`), or the guard blocks every tool call with a message saying
+so. Copilot uses the PowerShell 7 hooks (`guard.ps1`, `log.ps1`). Both guards share the same
+policy files and are tested by `tests/repo-harness.sh`. See
+[docs/claude-code.md](docs/claude-code.md#hooks-on-native-windows).
 
 - Work on a branch (`agent/`, `copilot/`, `claude/`, `ccr-`, `part/`); never push to `main`.
   Changes reach `main` only through a reviewed PR with green CI.

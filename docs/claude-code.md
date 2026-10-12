@@ -34,6 +34,13 @@ Claude Code differs from Copilot in ways that matter for a policy hook ([hooks r
 
 `test-hooks.sh` / `test-hooks.ps1` run every case in `hook-cases.txt` in both the Copilot and the Claude payload shape.
 
+### Hooks on native Windows
+
+- **`--os windows`** wires every hook as `pwsh -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PROJECT_DIR}/…"` (exec form, with `args`). Install **PowerShell 7** (`winget install Microsoft.PowerShell`) first: with `onFailure: "block"`, a missing `pwsh` blocks every tool call, and Windows PowerShell 5.1 cannot run `guard.ps1`.
+- **Never wire a Windows hook as exec form with `"command": "bash"`.** Exec form looks `bash` up on the Windows `PATH`, where `C:\Windows\System32\bash.exe` (the WSL launcher) usually comes before Git Bash. WSL then either times out while starting (`timed out; blocking because onFailure is "block"`) or gets the Windows path with its backslashes stripped (`/bin/bash: E:OneDrive…/guard.sh: No such file or directory`). A bash hook that must also run on Windows uses **shell form** with the path in double quotes, `"command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/guard.sh\""` (no `args`). Claude Code runs shell form in Git Bash on Windows (where `bash` is Git's own) and `sh -c` on Linux and macOS. This repository's own `.claude/settings.json` does this.
+- The bash hooks need **`jq`** on Windows too (`winget install jqlang.jq`, then restart the session). Without it `guard.sh` exits 2 with a message saying so, which blocks every tool call.
+- Starting a process is slow on Windows (often 0.5–1 s with antivirus scanning), so the hooks keep the number of processes per call small and the `PreToolUse` timeout leaves room for it.
+
 ## GitHub repos: the Claude GitHub Action
 
 `.github/workflows/claude-factory.yml` runs the factory with `anthropics/claude-code-action@v1` when an issue gets the `agent-ready` label (the Agent task form adds it) or someone with write access comments `@claude`.
