@@ -23,4 +23,17 @@ for repo_dir in "$root"/template/repo/*/; do
     done
   done
 done
+# --keep-harness / -KeepHarness, into clones of this repo (which has its own harness).
+for os in linux windows; do
+  for assistant_dir in "$root"/template/assistant/*/; do
+    assistant="$(basename "$assistant_dir")"
+    a="$(mktemp -d)"; b="$(mktemp -d)"
+    git clone -q "$root" "$a/r" && git clone -q "$root" "$b/r"
+    bash "$root/install.sh" "$a/r" --os "$os" --assistant "$assistant" --keep-harness >/dev/null
+    pwsh -NoProfile -File "$root/install.ps1" "$b/r" -Os "$os" -Assistant "$assistant" -KeepHarness >/dev/null
+    if diff -r -x .git "$a/r" "$b/r" >/dev/null; then echo "same: keep-harness os=$os assistant=$assistant"
+    else echo "DIFFERENT: keep-harness os=$os assistant=$assistant"; diff -r -x .git "$a/r" "$b/r" | head -20; fail=1; fi
+    rm -rf "$a" "$b"
+  done
+done
 exit $fail

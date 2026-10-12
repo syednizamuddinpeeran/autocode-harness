@@ -78,7 +78,39 @@ run_one() {
   fi
 }
 
+# --keep-harness into a clone of this repo (which has its own harness), even with --force: the harness
+# stays byte for byte, the factory is installed and works on the repo's own hook helpers, and the
+# template's harness files that were held back are under .agent-work/harness/.
+keep_harness_one() {
+  local os="$1" tmp="$2" out got f
+  git clone -q "$root" "$tmp" && cd "$tmp" || return 1
+  git config user.email t@t && git config user.name t || return 1
+  out="$(bash "$root/install.sh" "$tmp" --repo github --os "$os" --assistant claude-code --force --keep-harness)" \
+    || { echo "install failed"; return 1; }
+  git diff --quiet -- .github .claude AGENTS.md CLAUDE.md || { echo "tracked harness files changed:"; git diff --stat; return 1; }
+  got="$(git status --porcelain --untracked-files=all | grep -E '^\?\? (\.github/(hooks|workflows)/|\.claude/settings\.json|AGENTS\.md|CLAUDE\.md|scripts/factory/(test-hooks|hook-cases))')"
+  [[ -z "$got" ]] || { echo "harness files written:"; echo "$got"; return 1; }
+  for f in scripts/factory/run-issue.sh scripts/factory/check.sh .claude/agents/factory.md .github/ISSUE_TEMPLATE/agent-task.yml \
+           .agent-work/harness/.github/hooks/scripts/stop-gate.sh .agent-work/harness/AGENTS.md; do
+    [[ -f "$f" ]] || { echo "missing: $f"; return 1; }
+  done
+  grep -qx 'kept harness (new): .github/hooks/scripts/stop-gate.sh' <<<"$out" || { echo "stop-gate not reported as kept"; return 1; }
+  grep -qx 'kept harness (differs): AGENTS.md' <<<"$out" || { echo "AGENTS.md not reported as kept"; return 1; }
+  [[ -z "$(git status --porcelain --untracked-files=all .agent-work)" ]] || { echo ".agent-work is not ignored"; return 1; }
+  if bash "$root/install.sh" "$tmp" --repo github --os "$os" --assistant claude-code --keep-harness | grep -q '^added:'; then
+    echo "re-install added files"; return 1
+  fi
+  sed -i 's/^ALLOW_NO_CHECKS=0/ALLOW_NO_CHECKS=1/' scripts/factory/commands.env
+  bash scripts/factory/check.sh >/dev/null || { echo "check.sh failed on the repo's own hook helpers"; return 1; }
+}
+
 fail=0
+for os in linux windows; do
+  echo "=== keep-harness os=$os"
+  tmp="$(mktemp -d)"
+  ( keep_harness_one "$os" "$tmp/repo" ) || { echo "FAILED: keep-harness os=$os"; fail=1; }
+  rm -rf "$tmp"
+done
 for repo in "${repos[@]}"; do
   for os in linux windows; do
     for assistant_dir in "$root"/template/assistant/*/; do

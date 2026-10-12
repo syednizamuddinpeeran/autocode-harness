@@ -2,7 +2,7 @@
 # Install the agent factory into an existing git repository.
 #
 #   ./install.sh <target-repo> [--repo github|local] [--os linux|wsl|windows]
-#                [--assistant copilot|claude-code] [--cloud none|aws] [--force]
+#                [--assistant copilot|claude-code] [--cloud none|aws] [--force] [--keep-harness]
 #
 #   --repo   repository type                                            [default: github]
 #              github  GitHub issue → pull request (cloud agent or local CLI, CI, branch protection)
@@ -16,6 +16,11 @@
 #   --cloud  where the project deploys                                  [default: none]
 #              aws   deny AWS credential use and deploys; deploy-from-CI workflow (GitHub repos)
 #   --force  overwrite files that already exist in the target
+#   --keep-harness  the target already has its own agent harness (e.g. this template repo): install
+#            the factory but never write .github/hooks/, .github/workflows/, .claude/settings.json,
+#            AGENTS.md, CLAUDE.md or the hook self-test (test-hooks, hook-cases.txt), not even with
+#            --force. The template's versions that are new or differ go to .agent-work/harness/
+#            for a person to review and merge by hand.
 #
 # The template is built from layers under template/, applied in order:
 #   core → repo/<type> → os/<os> → assistant/<assistant> → cloud/<cloud>
@@ -25,9 +30,9 @@
 set -euo pipefail
 src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
-dst="" repo="github" os="linux" assistant="copilot" cloud="none" force=0
+dst="" repo="github" os="linux" assistant="copilot" cloud="none" force=0 keep=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)   repo="${2:?--repo needs a value}"; shift 2 ;;
@@ -39,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --cloud)   cloud="${2:?--cloud needs a value}"; shift 2 ;;
     --cloud=*) cloud="${1#*=}"; shift ;;
     --force)  force=1; shift ;;
+    --keep-harness) keep=1; shift ;;
     -h|--help) usage 0 ;;
     -*) echo "Unknown option: $1" >&2; usage 1 ;;
     *)  [[ -z "$dst" ]] || { echo "Only one target allowed" >&2; usage 1; }; dst="$1"; shift ;;
@@ -78,16 +84,33 @@ for l in "${layers[@]}"; do
   done
 done
 
+# The target's own harness, which --keep-harness never writes.
+is_harness() {
+  case "$1" in
+    .github/hooks/*|.github/workflows/*|.claude/settings.json|AGENTS.md|CLAUDE.md) return 0 ;;
+    scripts/factory/test-hooks.sh|scripts/factory/test-hooks.ps1|scripts/factory/hook-cases.txt) return 0 ;;
+  esac
+  return 1
+}
+
 # Copy into the target.
-(cd "$stage" && find . -type f -print | sort) | while IFS= read -r f; do
+kept=0
+while IFS= read -r f; do
   f="${f#./}"
+  if [[ $keep -eq 1 ]] && is_harness "$f"; then
+    [[ -e "$dst/$f" ]] && cmp -s "$stage/$f" "$dst/$f" && continue
+    state="new"; [[ -e "$dst/$f" ]] && state="differs"
+    mkdir -p "$dst/.agent-work/harness/$(dirname "$f")"
+    cp "$stage/$f" "$dst/.agent-work/harness/$f"
+    echo "kept harness ($state): $f"; kept=$((kept + 1)); continue
+  fi
   if [[ -e "$dst/$f" && $force -eq 0 ]]; then
     echo "skip (exists): $f"; continue
   fi
   mkdir -p "$dst/$(dirname "$f")"
   cp "$stage/$f" "$dst/$f"
   echo "added: $f"
-done
+done < <(cd "$stage" && find . -type f -print | sort)
 
 gi="$dst/.gitignore"
 # Make sure the last existing line ends with a newline before appending.
@@ -99,11 +122,21 @@ chmod +x "$dst"/.github/hooks/scripts/*.sh "$dst"/scripts/factory/*.sh 2>/dev/nu
 
 echo
 echo "Installed: repo=$repo os=$os assistant=$assistant cloud=$cloud"
-echo "Next: edit $dst/scripts/factory/commands.env and the Project section of $dst/AGENTS.md,"
-if [[ "$os" == "windows" ]]; then
-  echo "then run: (cd $dst; pwsh scripts/factory/test-hooks.ps1; pwsh scripts/factory/check.ps1)"
+if [[ $keep -eq 1 ]]; then
+  echo "Kept your harness: $kept template file(s) not installed; they are under $dst/.agent-work/harness/."
+  echo "A person reviews them and merges what the factory needs by hand, in particular:"
+  echo "  - the stop gate: .github/hooks/scripts/stop-gate.* and its Stop / agentStop hook entry"
+  echo "  - the factory's policy lines (protect scripts/factory/check*, commands.env, complexity.env;"
+  echo "    deny new-draft / create-issues / run-batch) in .github/hooks/policy/"
+  echo "  - the Project section of AGENTS.md, and any workflows you want"
+  echo "Then edit $dst/scripts/factory/commands.env and run your own hook tests and scripts/factory/check.*"
 else
-  echo "then run: (cd $dst && bash scripts/factory/test-hooks.sh && bash scripts/factory/check.sh)"
+  echo "Next: edit $dst/scripts/factory/commands.env and the Project section of $dst/AGENTS.md,"
+  if [[ "$os" == "windows" ]]; then
+    echo "then run: (cd $dst; pwsh scripts/factory/test-hooks.ps1; pwsh scripts/factory/check.ps1)"
+  else
+    echo "then run: (cd $dst && bash scripts/factory/test-hooks.sh && bash scripts/factory/check.sh)"
+  fi
 fi
 if [[ "$repo" == "local" ]]; then
   echo "Then commit, write a task from tasks/_template.md, commit it, and run scripts/factory/run-task.sh <id>."

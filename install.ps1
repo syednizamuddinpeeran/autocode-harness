@@ -2,7 +2,7 @@
 # PowerShell counterpart of install.sh; produces the same files for the same options.
 #
 #   pwsh ./install.ps1 <target-repo> [-Repo github|local] [-Os windows|linux|wsl]
-#                      [-Assistant copilot|claude-code] [-Cloud none|aws] [-Force]
+#                      [-Assistant copilot|claude-code] [-Cloud none|aws] [-Force] [-KeepHarness]
 #
 #   -Repo   repository type                                            [default: github]
 #             github  GitHub issue → pull request (cloud agent or local CLI, CI, branch protection)
@@ -16,6 +16,11 @@
 #   -Cloud  where the project deploys                                  [default: none]
 #             aws   deny AWS credential use and deploys; deploy-from-CI workflow (GitHub repos)
 #   -Force  overwrite files that already exist in the target
+#   -KeepHarness  the target already has its own agent harness (e.g. this template repo): install
+#           the factory but never write .github/hooks/, .github/workflows/, .claude/settings.json,
+#           AGENTS.md, CLAUDE.md or the hook self-test (test-hooks, hook-cases.txt), not even with
+#           -Force. The template's versions that are new or differ go to .agent-work/harness/
+#           for a person to review and merge by hand.
 #
 # Layers under template/ are applied in order: core → repo/<type> → os/<os> → assistant/<assistant>
 # → cloud/<cloud>.
@@ -28,7 +33,8 @@ param(
   [ValidateSet('linux', 'wsl', 'windows')][string]$Os = 'windows',
   [string]$Assistant = 'copilot',
   [string]$Cloud = 'none',
-  [switch]$Force
+  [switch]$Force,
+  [switch]$KeepHarness
 )
 $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
@@ -88,9 +94,23 @@ try {
     }
   }
 
+  # The target's own harness, which -KeepHarness never writes.
+  $harness = '^(\.github/(hooks|workflows)/|\.claude/settings\.json$|AGENTS\.md$|CLAUDE\.md$|scripts/factory/(test-hooks\.(sh|ps1)|hook-cases\.txt)$)'
+
   # Copy into the target.
+  $kept = 0
   foreach ($f in (Get-LayerFiles $stage | Sort-Object)) {
     $to = Join-Path $Target $f
+    if ($KeepHarness -and $f -cmatch $harness) {
+      $from = Join-Path $stage $f
+      $exists = Test-Path -LiteralPath $to
+      if ($exists -and (Get-FileHash -LiteralPath $from).Hash -eq (Get-FileHash -LiteralPath $to).Hash) { continue }
+      $state = if ($exists) { 'differs' } else { 'new' }
+      $keepTo = Join-Path $Target ".agent-work/harness/$f"
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $keepTo) | Out-Null
+      Copy-Item -LiteralPath $from -Destination $keepTo -Force
+      Write-Output "kept harness ($state): $f"; $kept++; continue
+    }
     if ((Test-Path -LiteralPath $to) -and -not $Force) { Write-Output "skip (exists): $f"; continue }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
     Copy-Item -LiteralPath (Join-Path $stage $f) -Destination $to -Force
@@ -118,6 +138,16 @@ if (-not $IsWindows) {
 
 Write-Output ''
 Write-Output "Installed: repo=$Repo os=$Os assistant=$Assistant cloud=$Cloud"
-Write-Output "Next: edit $Target/scripts/factory/commands.env and the Project section of $Target/AGENTS.md,"
-if ($Os -eq 'windows') { Write-Output "then run: cd $Target; pwsh scripts/factory/test-hooks.ps1; pwsh scripts/factory/check.ps1" }
-else { Write-Output "then run: (cd $Target && bash scripts/factory/test-hooks.sh && bash scripts/factory/check.sh)" }
+if ($KeepHarness) {
+  Write-Output "Kept your harness: $kept template file(s) not installed; they are under $Target/.agent-work/harness/."
+  Write-Output "A person reviews them and merges what the factory needs by hand, in particular:"
+  Write-Output "  - the stop gate: .github/hooks/scripts/stop-gate.* and its Stop / agentStop hook entry"
+  Write-Output "  - the factory's policy lines (protect scripts/factory/check*, commands.env, complexity.env;"
+  Write-Output "    deny new-draft / create-issues / run-batch) in .github/hooks/policy/"
+  Write-Output "  - the Project section of AGENTS.md, and any workflows you want"
+  Write-Output "Then edit $Target/scripts/factory/commands.env and run your own hook tests and scripts/factory/check.*"
+} else {
+  Write-Output "Next: edit $Target/scripts/factory/commands.env and the Project section of $Target/AGENTS.md,"
+  if ($Os -eq 'windows') { Write-Output "then run: cd $Target; pwsh scripts/factory/test-hooks.ps1; pwsh scripts/factory/check.ps1" }
+  else { Write-Output "then run: (cd $Target && bash scripts/factory/test-hooks.sh && bash scripts/factory/check.sh)" }
+}
