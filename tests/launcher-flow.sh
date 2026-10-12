@@ -203,6 +203,7 @@ echo "$seq_before" > "$FAKE_GH_SEQ"
 check "github: create-issue --draft creates without a prompt" 0 "$rc"
 grep -qx "agent-draft" "$FAKE_GH_CREATE" && ! grep -qx "agent-ready" "$FAKE_GH_CREATE" \
   || { echo "FAIL github: --draft must label agent-draft, not agent-ready"; fail=1; }
+grep -q "add the agent-ready label" <<<"$dout" || { echo "FAIL github: --draft review hint not shown"; fail=1; }
 grep -q "run-issue.sh 8" <<<"$out" || { echo "FAIL github: next step not shown"; fail=1; }
 
 # github: too big → breakdown → native sub-issues with blocked-by (human-only script)
