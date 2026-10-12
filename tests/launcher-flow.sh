@@ -197,6 +197,13 @@ grep -qx "agent-ready" "$FAKE_GH_CREATE" || { echo "FAIL github: agent-ready lab
 grep -q "^## Acceptance criteria" "$FAKE_GH_CREATE.body" && ! grep -q "^# Add CSV export" "$FAKE_GH_CREATE.body" \
   || { echo "FAIL github: issue body wrong"; fail=1; }
 bash scripts/factory/check-ready.sh "$FAKE_GH_CREATE.body" >/dev/null || { echo "FAIL github: created issue body is not ready"; fail=1; }
+seq_before="$(cat "$FAKE_GH_SEQ")"   # keep later issue numbers stable
+dout="$(bash scripts/factory/create-issue.sh --draft "$fx/ok-task.md" </dev/null 2>&1)"; rc=$?
+echo "$seq_before" > "$FAKE_GH_SEQ"
+check "github: create-issue --draft creates without a prompt" 0 "$rc"
+grep -qx "agent-draft" "$FAKE_GH_CREATE" && ! grep -qx "agent-ready" "$FAKE_GH_CREATE" \
+  || { echo "FAIL github: --draft must label agent-draft, not agent-ready"; fail=1; }
+grep -q "add the agent-ready label" <<<"$dout" || { echo "FAIL github: --draft review hint not shown"; fail=1; }
 grep -q "run-issue.sh 8" <<<"$out" || { echo "FAIL github: next step not shown"; fail=1; }
 
 # github: too big → breakdown → native sub-issues with blocked-by (human-only script)
