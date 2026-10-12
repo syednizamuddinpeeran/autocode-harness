@@ -30,6 +30,10 @@ policy files and are tested by `tests/repo-harness.sh`. See
   Changes reach `main` only through a reviewed PR with green CI.
 - Never force-push, skip hooks (`--no-verify`), merge PRs into `main`, or change repo settings,
   secrets or rulesets.
+- The factory (`scripts/factory/`, agents, skills) can run on this repo too: install it with
+  `./install.sh . --repo github --os windows --assistant claude-code --keep-harness`, which never
+  touches the harness. A person merges what the factory needs from `.agent-work/harness/` (stop gate,
+  policy lines). See [docs/install.md](docs/install.md#repos-that-already-have-their-own-harness---keep-harness).
 - Humans change the harness itself: `.github/hooks/`, `.github/workflows/`, `.claude/settings.json`,
   `CLAUDE.md`, `LICENSE`. If a task needs that, stop and say so in the PR.
 - Everything under `template/` stays editable: that is the product.

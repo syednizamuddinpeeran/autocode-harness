@@ -4,11 +4,11 @@ One template, four choices. `install.sh` (bash) and `install.ps1` (PowerShell 7)
 
 ```bash
 ./install.sh <target-repo> [--repo github|local] [--os linux|wsl|windows] \
-             [--assistant copilot|claude-code] [--cloud none|aws] [--force]
+             [--assistant copilot|claude-code] [--cloud none|aws] [--force] [--keep-harness]
 ```
 ```powershell
 pwsh ./install.ps1 <target-repo> [-Repo github|local] [-Os windows|linux|wsl] `
-                   [-Assistant copilot|claude-code] [-Cloud none|aws] [-Force]
+                   [-Assistant copilot|claude-code] [-Cloud none|aws] [-Force] [-KeepHarness]
 ```
 
 | Option | Values | Default | Read |
@@ -39,6 +39,32 @@ The target must be a git repository with at least one commit. Existing files are
 3. Commit to the base branch before running any agent.
 4. Do the one-time setup for your choices: GitHub settings ([usage-guide.md](usage-guide.md#4-one-time-github-setup)), sandbox ([sandboxing.md](sandboxing.md)), Claude GitHub App ([claude-code.md](claude-code.md)), AWS OIDC ([aws.md](aws.md)).
 5. Work through [human-safety-checklist.md](human-safety-checklist.md).
+
+## Repos that already have their own harness (`--keep-harness`)
+
+Some repos already guard their agents with hooks and policy of their own, such as this template repo. `--keep-harness` (`-KeepHarness`) installs the factory there without touching that harness:
+
+- **Installed as usual:** `scripts/factory/` (launchers, `check`, `setup`, the readiness, complexity and breakdown checks, `commands.env`), the agents and skills, the issue form and the PR template.
+- **Never written, not even with `--force`:** `.github/hooks/`, `.github/workflows/`, `.claude/settings.json`, `AGENTS.md`, `CLAUDE.md`, and the hook self-test (`test-hooks.*`, `hook-cases.txt`, which test the template's policy, not yours).
+- **Held back for review:** the template's versions of those files that are new or differ go to `.agent-work/harness/` (gitignored). The installer lists each one as `kept harness (new)` or `kept harness (differs)`.
+
+A person then merges by hand what the factory needs from `.agent-work/harness/`:
+
+1. **The stop gate:** `stop-gate.sh` / `.ps1` into `.github/hooks/scripts/`, plus a `Stop` hook (Claude Code) or `agentStop` hook (Copilot) that runs it.
+2. **The factory's policy lines:**
+   - write-protect `scripts/factory/check*`, `commands.env`, `complexity.env` and the human-only launchers;
+   - deny `new-draft`, `create-issues` and `run-batch`.
+
+   Without them an agent could weaken its own checks.
+3. **The Project section of `AGENTS.md`**, and any workflows you want (`ci.yml`, `claude-factory.yml` needs a secret).
+
+`check.sh` sources your `.github/hooks/scripts/common.sh` and needs its `factory_log_dir` and `factory_state_hash`; `check.ps1` needs `Get-FactoryLogDir` and `Get-FactoryStateHash` from `common.ps1`. Keep those functions if your harness has its own helpers. Then edit `commands.env` and run your own hook tests and `scripts/factory/check.sh`.
+
+On this repo:
+
+```bash
+./install.sh . --repo github --os windows --assistant claude-code --keep-harness
+```
 
 ## How the template is built (for maintainers)
 
