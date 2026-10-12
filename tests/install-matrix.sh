@@ -91,11 +91,20 @@ keep_harness_one() {
   got="$(git status --porcelain --untracked-files=all | grep -E '^\?\? (\.github/(hooks|workflows)/|\.claude/settings\.json|AGENTS\.md|CLAUDE\.md|scripts/factory/(test-hooks|hook-cases))')"
   [[ -z "$got" ]] || { echo "harness files written:"; echo "$got"; return 1; }
   for f in scripts/factory/run-issue.sh scripts/factory/check.sh .claude/agents/factory.md .github/ISSUE_TEMPLATE/agent-task.yml \
-           .agent-work/harness/.github/hooks/scripts/stop-gate.sh .agent-work/harness/AGENTS.md; do
+           .agent-work/harness/AGENTS.md; do
     [[ -f "$f" ]] || { echo "missing: $f"; return 1; }
   done
-  grep -qx 'kept harness (new): .github/hooks/scripts/stop-gate.sh' <<<"$out" || { echo "stop-gate not reported as kept"; return 1; }
   grep -qx 'kept harness (differs): AGENTS.md' <<<"$out" || { echo "AGENTS.md not reported as kept"; return 1; }
+  # The stop gate: a copy identical to the template's is skipped silently; otherwise it is held back.
+  f=.github/hooks/scripts/stop-gate.sh
+  if [[ -f "$f" ]] && cmp -s "$f" "$root/template/core/$f"; then
+    if grep -q "kept harness .*: $f\$" <<<"$out" || [[ -e ".agent-work/harness/$f" ]]; then
+      echo "identical $f reported as kept"; return 1
+    fi
+  else
+    grep -Eqx "kept harness \((new|differs)\): $f" <<<"$out" && [[ -f ".agent-work/harness/$f" ]] \
+      || { echo "$f not held back"; return 1; }
+  fi
   [[ -z "$(git status --porcelain --untracked-files=all .agent-work)" ]] || { echo ".agent-work is not ignored"; return 1; }
   if bash "$root/install.sh" "$tmp" --repo github --os "$os" --assistant claude-code --keep-harness | grep -q '^added:'; then
     echo "re-install added files"; return 1
