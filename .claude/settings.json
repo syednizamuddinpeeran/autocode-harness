@@ -131,6 +131,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.github/hooks/scripts/stop-gate.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
     ]
   }
 }

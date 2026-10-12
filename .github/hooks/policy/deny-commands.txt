@@ -34,3 +34,6 @@
 
 # --- Audit log tampering ---
 (\brm\b|\bmv\b|\btruncate\b|\bshred\b|sed\s+-i|>\s*)[^|;&]*\.agent-logs
+
+# Human-only factory steps (they start more agents).
+\b(new-draft|create-issues?|create-tasks?|run-batch)\.(sh|ps1)\b
