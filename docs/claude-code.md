@@ -43,7 +43,7 @@ Claude Code differs from Copilot in ways that matter for a policy hook ([hooks r
 
 ## GitHub repos: the Claude GitHub Action
 
-`.github/workflows/claude-factory.yml` runs the factory with `anthropics/claude-code-action@v1` when an issue gets the `agent-ready` label (the Agent task form adds it) or someone with write access comments `@claude`.
+`.github/workflows/claude-factory.yml` runs the factory with `anthropics/claude-code-action@v1` when an issue gets the `agent-ready` label (the Agent task form adds it; `create-issue.sh --draft` labels issues `agent-draft` instead, so nothing starts until you review them and add `agent-ready`) or someone with write access comments `@claude`.
 
 One-time setup:
 1. Install the Claude GitHub App on the repository (`/install-github-app` in Claude Code, or see the [GitHub Actions docs](https://code.claude.com/docs/en/github-actions)).
