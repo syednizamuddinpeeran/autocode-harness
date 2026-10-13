@@ -1,6 +1,6 @@
 # Installing: choose your combination
 
-One template, four choices. `install.sh` (bash) and `install.ps1` (PowerShell 7) take the same options and produce the same files.
+One template, four choices (plus `--keep-harness` for repos with their own harness). `install.sh` (bash) and `install.ps1` (PowerShell 7) take the same options and produce the same files.
 
 ```bash
 ./install.sh <target-repo> [--repo github|local] [--os linux|wsl|windows] \
@@ -16,9 +16,10 @@ pwsh ./install.ps1 <target-repo> [-Repo github|local] [-Os windows|linux|wsl] `
 | Repo type | `github` — issue → PR, cloud agent or local CLI, CI + branch protection<br>`local` — task file → local branch, merged with `accept`; no remote | `github` | [usage-guide.md](usage-guide.md), [local-repo.md](local-repo.md) |
 | OS (where agents run locally) | `linux`, `wsl` — bash<br>`windows` — adds PowerShell 7 hooks and scripts | `linux` (`install.sh`), `windows` (`install.ps1`) | [platforms.md](platforms.md) |
 | Assistant | `copilot` — GitHub Copilot cloud agent and CLI<br>`claude-code` — Claude Code CLI and GitHub Action | `copilot` | [claude-code.md](claude-code.md) |
+| Keep harness | `--keep-harness` / `-KeepHarness` — the target already has its own hooks and policy: install the factory without touching them | off | [below](#repos-that-already-have-their-own-harness---keep-harness) |
 | Cloud (where the project deploys) | `none`<br>`aws` — AWS guardrails, credential-free agents, OIDC deploy workflow | `none` | [aws.md](aws.md) |
 
-The target must be a git repository with at least one commit. Existing files are skipped unless you pass `--force`; the installer appends `.agent-logs/` and `.agent-work/` to `.gitignore`. Re-running with the same options changes nothing.
+The target must be a git repository with at least one commit. Existing files are skipped unless you pass `--force` (not with `--keep-harness`: harness files are never written, see [below](#repos-that-already-have-their-own-harness---keep-harness)); the installer appends `.agent-logs/` and `.agent-work/` to `.gitignore`. Re-running with the same options changes nothing.
 
 ## What each choice installs
 
@@ -30,6 +31,7 @@ The target must be a git repository with at least one commit. Existing files are
 | `--os windows` | `*.ps1` for every hook and script, PowerShell deny patterns; with `copilot`, `factory.json` gets `powershell` commands; with `claude-code`, `settings.json` calls `pwsh` |
 | `--assistant copilot` | `.github/agents/*.agent.md`, `.github/skills/`, `.github/hooks/factory.json`, `copilot-setup-steps.yml` (github) |
 | `--assistant claude-code` | `.claude/agents/*.md`, `.claude/skills/`, `.claude/settings.json`, `claude-factory.yml` (github), `.claude/` write-protected |
+| `--keep-harness` | Everything above except the harness: `.github/hooks/`, `.github/workflows/`, `.claude/settings.json`, `AGENTS.md`, `CLAUDE.md`, `test-hooks.*` and `hook-cases.txt` are never written, not even with `--force`; the template's versions are held in `.agent-work/harness/` for you to merge |
 | `--cloud aws` | AWS deny patterns and paths, `FORBIDDEN_ENV` for AWS credentials, `deploy-aws.yml` (github) |
 
 ## After installing
@@ -80,3 +82,12 @@ core → repo/<type> → os/<os> → assistant/<name> → cloud/<name>
 - Missing layers are skipped (there is no `os/linux` or `cloud/none`).
 
 This repo's own CI (`.github/workflows/selftest.yml`) installs combinations into scratch repos and runs their self-tests on Ubuntu and Windows, checks that both installers agree (`installer-parity.sh`), that agent and skill bodies match across assistants (`check-assistant-sync.sh`), shellcheck, and docs links. See [AGENTS.md](../AGENTS.md) for contributor rules.
+
+## This repo's own harness (for maintainers)
+
+This repo works under its own guard, separate from the one the installer writes into other repos: `.github/hooks/` (scripts, `policy/`, `hook-cases.txt`), `.github/hooks/repo-harness.json` (Copilot) and `.claude/settings.json` (Claude Code). Tool calls are logged to `.agent-logs/` (not committed). The factory is installed here with `--keep-harness`, so the installer never overwrites it. Edits to `template/` change the product; edits to the harness change only this repo.
+
+- **Humans own it.** Agents must not change `.github/hooks/`, `.github/workflows/`, `.claude/settings.json`, `CLAUDE.md` or `LICENSE`; a task that needs that stops and says so in the PR. Work happens on `agent/`, `copilot/`, `claude/`, `ccr-` or `part/` branches, never on `main`, and reaches `main` only through a reviewed PR with green CI.
+- **Requirements.** `git` and `jq`. On Windows, Claude Code runs the hooks through Git Bash, so `.claude/settings.json` uses shell form with a quoted path ([claude-code.md](claude-code.md#hooks-on-native-windows)); Copilot uses the PowerShell 7 hooks (`guard.ps1`, `log.ps1`). Both guards share the same policy files and are tested by `tests/repo-harness.sh`.
+- **Before pushing**, run the checks listed in [AGENTS.md](../AGENTS.md): `bash tests/install-matrix.sh`, `bash tests/installer-parity.sh`, `bash tests/launcher-flow.sh`, `bash tests/repo-harness.sh`, `bash tests/check-links.sh`, `bash tests/check-assistant-sync.sh`, and `shellcheck --severity=warning --shell=bash` on every `*.sh`; with `pwsh` also `pwsh -File tests/install-matrix.ps1`.
+- **Keep in step.** Update `docs/` with any behaviour change, and every `.sh` script with its `.ps1`. `.gitattributes` keeps scripts and policy files LF in Windows checkouts.

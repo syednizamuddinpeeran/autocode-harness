@@ -13,6 +13,7 @@
 | `new-draft.sh is interactive` | Run without a terminal (CI, pipe) | Run it in a terminal; it asks you questions |
 | `create-issue --draft` created nothing | It validates every draft first and creates none if any is not ready | Fix the draft it names and run again |
 | `create-issue` / `create-task` says not ready | The draft still has `OPEN:` items or empty sections | Answer them (edit the draft or re-run `new-draft --id <id>`, which continues it) |
+| After `--keep-harness`, `check.sh` fails with `factory_log_dir` / `factory_state_hash: command not found` (`check.ps1`: `Get-FactoryLogDir` / `Get-FactoryStateHash` not recognized) | `check` sources your own `common.sh` / `common.ps1`, which lacks the helpers the factory needs | Add those functions to your `common.*` (copy them from `.agent-work/harness/`); see [install.md](install.md#repos-that-already-have-their-own-harness---keep-harness) |
 | `No checks configured` (exit 3) | All commands empty in `commands.env` | Configure them, or `ALLOW_NO_CHECKS=1` for docs-only repos |
 | Copilot rejects flags | CLI flag names changed | `copilot help permissions`; adjust `run-issue.sh` (human edit) |
 | Cloud agent can't build/test | Runtime missing in its environment | Uncomment the runtime in `copilot-setup-steps.yml`; the job must be named `copilot-setup-steps` and the file must be on the default branch |

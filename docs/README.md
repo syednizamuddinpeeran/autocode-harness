@@ -9,6 +9,8 @@ The pages below describe the default combination (`--repo github --assistant cop
 | If you want to… | Read |
 |---|---|
 | Pick repo type, OS, assistant and cloud | [install.md](install.md) |
+| Install into a repo that already has its own hooks | [install.md](install.md#repos-that-already-have-their-own-harness---keep-harness) |
+| Work on this template repo itself | [install.md](install.md#this-repos-own-harness-for-maintainers) |
 | Get running in 5 minutes | [Quickstart](#quickstart) below, then [usage-guide.md](usage-guide.md) |
 | Understand how it works | [architecture.md](architecture.md), [agents-and-skills.md](agents-and-skills.md) |
 | Know why it is safe | [security-model.md](security-model.md) |
