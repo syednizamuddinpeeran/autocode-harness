@@ -19,10 +19,10 @@
 | `check-complexity.sh <plan> <brief>` / `--diff <base> [<head>]` | factory agent, CI `size` job, `accept.sh` | Measures a plan (or a real diff) against `complexity.env`. Exit 0 within limits, 6 too complex, 4 plan malformed |
 | `check-breakdown.sh <breakdown> [brief] [--split <dir>]` | factory agent, create-issues, create-tasks | Items ready, numbered, dependencies valid and acyclic, parent ACs covered. Exit 0 valid, 4 invalid |
 | `check-ready.sh <file>` | run-issue, run-task, human | Deterministic readiness gate: Goal, ≥1 acceptance criterion, Out of scope, Risk (low/medium/high) filled in, nothing marked `OPEN:`. Exit 0 ready, 4 not ready |
-| `test-hooks.sh` | human, CI | Runs every case in `hook-cases.txt` plus payload-shape, stop-gate, logging and redaction checks in a throwaway repo (39 for github/linux) |
+| `test-hooks.sh` | human, CI | Runs every case in `hook-cases.txt` plus payload-shape, stop-gate, logging and redaction checks in a throwaway repo; it reports the number of cases run and failed |
 | `hook-cases.txt` | human edits | Guard test cases: `<allow\|deny> <sh\|view\|edit\|create> <description> :: <argument>`, `@checkout <branch>` |
 
-`install.sh <target> [--repo github|local] [--os linux|wsl|windows] [--assistant copilot|claude-code] [--cloud none|aws] [--force]` (or `pwsh install.ps1 <target> [-Repo …] [-Os …] [-Assistant …] [-Cloud …] [-Force]`, same output) (template repo root) builds the template from `template/core` + `template/repo/<type>` and copies it into another repo.
+`install.sh <target> [--repo github|local] [--os linux|wsl|windows] [--assistant copilot|claude-code] [--cloud none|aws] [--force] [--keep-harness]` (or `pwsh install.ps1 <target> [-Repo …] [-Os …] [-Assistant …] [-Cloud …] [-Force] [-KeepHarness]`, same output) (template repo root) builds the template from `template/core` + `template/repo/<type>` and copies it into another repo. `--keep-harness` / `-KeepHarness` installs the factory into a repo that already has its own hooks and policy without touching them; see [install.md](install.md#repos-that-already-have-their-own-harness---keep-harness).
 
 Repo-type and OS pieces in the installed tree: `.github/hooks/policy/git-rules.env` (which branches agents may use, which git subcommands are limited to them, whether push refspecs must be the current branch), the sections appended to each `policy/*.txt`, and the cases appended to `scripts/factory/hook-cases.txt` (run by both `test-hooks.sh` and `test-hooks.ps1`).
 
@@ -62,7 +62,7 @@ Lines starting with `#` are comments. Humans edit; agents cannot.
 | `FACTORY_STOP_GATE=off` | stop-gate | Disable the stop gate for a session |
 | `FACTORY_LOG_DIR` | common.sh | Override log directory |
 | `FACTORY_POLICY_DIR` | guard.sh | Override policy directory |
-| `FACTORY_BRANCH_PREFIXES` | guard.sh | Branch prefixes allowed to `git push` (default `agent/ copilot/`) |
+| `FACTORY_BRANCH_PREFIXES` | guard.sh | Branch prefixes allowed to `git push` (default from `git-rules.env`: `agent/ copilot/ claude/` for github, `agent/` for local) |
 | `FACTORY_WORKTREE_ROOT` | run-issue | Worktree parent (default `../<repo>-worktrees`) |
 | `COPILOT_EXTRA_FLAGS` | run-issue/run-task | Extra Copilot CLI flags for autonomous runs (e.g. `--sandbox`) |
 | `CLAUDE_EXTRA_FLAGS` | run-issue/run-task | Extra Claude Code flags for autonomous runs (e.g. `--max-turns 200`) |
