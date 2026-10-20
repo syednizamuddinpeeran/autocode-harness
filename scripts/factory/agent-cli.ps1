@@ -63,6 +63,10 @@ function Invoke-AgentCli([string]$Assistant, [string]$Prompt, [string[]]$Deny, [
         Write-Output 'Starting interactive session. Paste this, then pick a permission mode (Shift+Tab):'
         Write-Output '----'; Write-Output $Prompt; Write-Output '----'
         & claude --agent factory --disallowedTools @flags
+      } elseif ($env:CLAUDE_REMOTE -eq '1') {
+        # claude -p never registers for Remote Control, so run interactively to show on web and mobile.
+        # The session stays open until /exit. The prompt must precede --disallowedTools, which would swallow it.
+        & claude --agent factory --permission-mode bypassPermissions --remote-control factory @extra $Prompt --disallowedTools @flags
       } else {
         & claude --agent factory --permission-mode bypassPermissions --disallowedTools @flags @extra -p $Prompt
       }

@@ -67,6 +67,14 @@ agent_cli() {
         echo "----"; echo "$prompt"; echo "----"
         claude --agent factory --disallowedTools "${flags[@]}"; return
       fi
+      if [[ "${CLAUDE_REMOTE:-}" == "1" ]]; then
+        # claude -p never registers for Remote Control, so run interactively to show on web and mobile.
+        # The session stays open until /exit. The prompt must precede --disallowedTools, which would swallow it.
+        # shellcheck disable=SC2086  # CLAUDE_EXTRA_FLAGS is a list of flags
+        claude --agent factory --permission-mode bypassPermissions --remote-control factory \
+          ${CLAUDE_EXTRA_FLAGS:-} "$prompt" --disallowedTools "${flags[@]}"
+        return
+      fi
       # shellcheck disable=SC2086  # CLAUDE_EXTRA_FLAGS is a list of flags
       claude --agent factory --permission-mode bypassPermissions --disallowedTools "${flags[@]}" \
         ${CLAUDE_EXTRA_FLAGS:-} -p "$prompt"
