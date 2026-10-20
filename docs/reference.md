@@ -66,6 +66,7 @@ Lines starting with `#` are comments. Humans edit; agents cannot.
 | `FACTORY_WORKTREE_ROOT` | run-issue | Worktree parent (default `../<repo>-worktrees`) |
 | `COPILOT_EXTRA_FLAGS` | run-issue/run-task | Extra Copilot CLI flags for autonomous runs (e.g. `--sandbox`) |
 | `CLAUDE_EXTRA_FLAGS` | run-issue/run-task | Extra Claude Code flags for autonomous runs (e.g. `--max-turns 200`) |
+| `CLAUDE_REMOTE` | run-issue/run-task | Set to `1` (Claude Code) to run autonomous sessions interactively with `--remote-control`, so they show on claude.ai/code and the mobile app. `-p` runs never register. The session stays open until `/exit`; `--max-turns` and other `-p`-only flags in `CLAUDE_EXTRA_FLAGS` do not apply |
 | `GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true` | Copilot CLI (set by run-issue) | Load repository hooks in `-p` mode in an untrusted folder |
 
 ## Log format
