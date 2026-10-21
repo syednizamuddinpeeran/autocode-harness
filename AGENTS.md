@@ -8,7 +8,7 @@ This repo *is* the agent-factory template; it is not an installed copy.
 - `.github/workflows/selftest.yml` is this repo's own CI and is not installed.
 - Before pushing run: `bash tests/install-matrix.sh`, `bash tests/installer-parity.sh`,
   `bash tests/launcher-flow.sh`, `bash tests/repo-harness.sh`, `bash tests/check-links.sh`,
-  `bash tests/check-assistant-sync.sh`, and `shellcheck --severity=warning --shell=bash` on every `*.sh`.
+  `bash tests/check-assistant-sync.sh`, `bash tests/paths-lib.sh`, and `shellcheck --severity=warning --shell=bash` on every `*.sh`.
   With pwsh available also `pwsh -File tests/install-matrix.ps1`.
 - Keep `docs/` in step with any behaviour change, and every `.sh` script in step with its `.ps1`.
 
