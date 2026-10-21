@@ -37,3 +37,35 @@
 
 # Human-only factory steps (they start more agents).
 \b(new-draft|create-issues?|create-tasks?|run-batch)\.(sh|ps1)\b
+
+# --- Adopted from the template (2026-10-21): GitHub actions a human must do ---
+\bgh\s+pr\s+review\b.*--approve
+\bgh\s+workflow\s+(run|enable|disable)\b
+\bgh\s+auth\s+(token|refresh|login|logout)\b
+\bgh\s+api\b.*(-X|--method)\s*(DELETE|PUT|PATCH)
+# --- Adopted from the template: stricter git push safety ---
+\bgit\s+push\b.*(--force|\s-f(\s|$)|--mirror|--delete|--all|--tags|\s\+\S|\s:\S)
+# --- Adopted from the template: cloud / infra changes (agents never deploy) ---
+\bterraform\s+(apply|destroy|import|state)\b
+\bkubectl\s+(delete|apply|replace|scale|drain)\b
+\bhelm\s+(install|upgrade|uninstall|delete)\b
+\bpulumi\s+(up|destroy)\b
+\bsam\s+deploy\b
+\b(cdk|npx\s+cdk)\s+(deploy|destroy|bootstrap)\b
+\baws\s+\S+\s+(delete|terminate|remove|put|create|update|attach|detach|modify|deregister)-
+# --- Adopted from the template: PowerShell / Windows equivalents ---
+(\bRemove-Item\b|\bri\b|\bdel\b|\bMove-Item\b|\bClear-Content\b|\bSet-Content\b|\bOut-File\b|\bAdd-Content\b)[^|;&]*\.agent-logs
+\$env:[A-Za-z_]*(TOKEN|SECRET|PASSWORD|API_KEY)
+\b(Get-ChildItem|gci|dir|ls)\s+env:
+^\s*(Get-ChildItem|gci|dir|ls)\s+env:\s*$
+\b(Get-Content|gc|type|Copy-Item|cpi|Select-String|sls)\b[^|;&]*(\.env(\.|\s|$)|id_rsa|id_ed25519|\.ssh[\\/]|\.aws[\\/]credentials|\.npmrc|\.pypirc|\.netrc|\.git-credentials)
+\b(Remove-Item|ri|del|erase|rd|rmdir)\b.*\s-(Recurse|r)\b.*\s([A-Za-z]:[\\/]?\*?|[\\/]\*?|~|\$env:(USERPROFILE|HOMEDRIVE|SystemRoot)|\$HOME)(\s|$)
+\b(Format-Volume|Clear-Disk|Initialize-Disk)\b
+\bformat\s+[A-Za-z]:
+\b(Set|New|Remove)-ItemProperty\b.*\bHK(LM|CU|CR|U)\b
+\breg(\.exe)?\s+(add|delete|import)\b
+\b(iex|Invoke-Expression)\b.*\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod|DownloadString)\b
+\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod|curl|wget)\b.*\|\s*(iex|Invoke-Expression)\b
+\bSet-ExecutionPolicy\b
+\bStart-Process\b.*-Verb\s+RunAs\b
+\brunas\b
