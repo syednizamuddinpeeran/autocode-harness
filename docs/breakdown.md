@@ -67,7 +67,7 @@ scripts/factory/run-batch.sh <parent> --auto-continue   # …and keep starting i
 - Without `--auto-continue`, the batch ends when the runs it could start have finished. Review and merge them, then run it again.
 - With `--auto-continue`, it checks every `BATCH_POLL_SECONDS` (default 60) for your merges and starts the items they unblock. It stops when every item is merged, or when nothing can move without you: an item stopped with questions, a breakdown or a failure.
 - Merging is never automatic. On GitHub each item is a normal PR; locally you run `accept.sh <parent>.<n>` (which also checks the size).
-- An item that already has a branch or worktree is not started again. Delete it to retry, or run `run-issue.sh` / `run-task.sh` for that item yourself.
+- An item that already has a branch or worktree is not started again. Delete it to retry, or run `run-issue.sh` / `run-task.sh` for that item yourself. A later batch shows such an item as `review` if its branch has commits, and as `needs you` if it has none (the earlier run stopped), so `--auto-continue` does not wait for a PR that will never come.
 - Exit codes: 0 every run it started finished, 1 a run failed or stopped, 2 no items found.
 - Agents are denied `run-batch` (it starts more agents).
 
