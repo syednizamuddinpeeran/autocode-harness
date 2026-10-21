@@ -90,6 +90,15 @@
         "cwd": ".",
         "timeoutSec": 10
       }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "bash .github/hooks/scripts/stop-gate.sh",
+        "powershell": "pwsh -NoProfile -ExecutionPolicy Bypass -File .github/hooks/scripts/stop-gate.ps1",
+        "cwd": ".",
+        "timeoutSec": 20
+      }
     ]
   }
 }
