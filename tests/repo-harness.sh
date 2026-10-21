@@ -29,26 +29,41 @@ payload() { # payload <kind> <arg>
     else jq -nc --arg t "$1" --arg p "$2" '{sessionId:"t",toolName:$t,toolArgs:{path:$p}}'; fi
   fi
 }
-for fmt in copilot claude; do
-  while IFS= read -r line; do
-    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
-    read -r want kind _ <<<"$line"
-    desc="$(sed -E 's/^[a-z]+[[:space:]]+[a-z]+[[:space:]]+//; s/[[:space:]]*::.*$//' <<<"$line")"
-    arg="${line#*:: }"
-    run "$want" "$desc" "$(payload "$kind" "$arg")"
-  done < .github/hooks/hook-cases.txt
-done
-# The PowerShell guard (Windows) must decide the same, when pwsh is available.
-if command -v pwsh >/dev/null; then
-  guard=(pwsh -NoProfile -File .github/hooks/scripts/guard.ps1)
+# cases <desc-prefix>: every case in hook-cases.txt, in both payload shapes. Directives:
+#   @checkout <branch>   switch the throwaway repo's branch ("-" = back to claude/test)
+#   @worktree <branch>   add a second worktree (under .agent-work/) on <branch>, created if missing
+# In arguments, {branch} is the agent branch, {worktree} the last @worktree's path, \n a newline.
+cases() {
+  local line want kind desc arg b worktree=""
   for fmt in copilot claude; do
     while IFS= read -r line; do
       [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+      if [[ "$line" =~ ^@checkout[[:space:]]+(.+)$ ]]; then
+        b="${BASH_REMATCH[1]}"; [[ "$b" == "-" ]] && b=claude/test
+        git checkout -q "$b"; continue
+      fi
+      if [[ "$line" =~ ^@worktree[[:space:]]+(.+)$ ]]; then
+        b="${BASH_REMATCH[1]}"; worktree=".agent-work/wt-${b//\//-}"
+        if [[ ! -d "$worktree" ]]; then
+          git rev-parse -q --verify "refs/heads/$b" >/dev/null || git branch -q "$b"
+          git worktree add -q "$worktree" "$b"
+        fi
+        continue
+      fi
       read -r want kind _ <<<"$line"
-      desc="ps1: $(sed -E 's/^[a-z]+[[:space:]]+[a-z]+[[:space:]]+//; s/[[:space:]]*::.*$//' <<<"$line")"
-      run "$want" "$desc" "$(payload "$kind" "${line#*:: }")"
+      desc="$1$(sed -E 's/^[a-z]+[[:space:]]+[a-z]+[[:space:]]+//; s/[[:space:]]*::.*$//' <<<"$line")"
+      arg="${line#*:: }"; arg="${arg//\{branch\}/claude/test}"; arg="${arg//\{worktree\}/$worktree}"
+      arg="${arg//\\n/$'\n'}"
+      run "$want" "$desc" "$(payload "$kind" "$arg")"
     done < .github/hooks/hook-cases.txt
+    git checkout -q claude/test
   done
+}
+cases ""
+# The PowerShell guard (Windows) must decide the same, when pwsh is available.
+if command -v pwsh >/dev/null; then
+  guard=(pwsh -NoProfile -File .github/hooks/scripts/guard.ps1)
+  cases "ps1: "
   guard=(bash .github/hooks/scripts/guard.sh)
 else
   echo "(pwsh not found: PowerShell guard not tested)"
