@@ -18,6 +18,7 @@ try {
   git add -A ; git commit -qm init
   git checkout -qb agent/test-1
   $agentBranch = 'agent/test-1'
+  $worktree = ''
 
   function Invoke-Hook([string]$Script, [string]$Json, [string[]]$HookArgs = @()) {
     $out = $Json | & pwsh -NoProfile -File ".github/hooks/scripts/$Script" @HookArgs 2>$null
@@ -57,8 +58,18 @@ try {
       $b = $Matches[1].Trim(); if ($b -eq '-') { $b = $agentBranch }
       git checkout -q $b; continue
     }
+    if ($line -match '^@worktree\s+(.+)$') {
+      $b = $Matches[1].Trim(); $worktree = ".agent-work/wt-$($b.Replace('/', '-'))"
+      if (-not (Test-Path -LiteralPath $worktree)) {
+        git rev-parse -q --verify "refs/heads/$b" *> $null
+        if ($LASTEXITCODE -ne 0) { git branch -q $b }
+        git worktree add -q $worktree $b
+      }
+      continue
+    }
     if ($line -notmatch '^\s*(allow|deny)\s+([a-z]+)\s+(.*?)\s*::\s(.*)$') { $global:fail++; Write-Output "FAIL: bad case line: $line"; continue }
-    $want = $Matches[1]; $kind = $Matches[2]; $desc = $Matches[3]; $arg = $Matches[4].Replace('{branch}', $agentBranch)
+    $want = $Matches[1]; $kind = $Matches[2]; $desc = $Matches[3]
+    $arg = $Matches[4].Replace('{branch}', $agentBranch).Replace('{worktree}', [string]$worktree).Replace('\n', "`n")
     if ($kind -eq 'sh') { Expect $want "$desc [$format]" (Sh $arg) } else { Expect $want "$desc [$format]" (Ed $kind $arg) }
   }
   git checkout -q $agentBranch

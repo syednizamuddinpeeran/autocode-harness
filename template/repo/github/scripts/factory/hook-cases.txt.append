@@ -18,3 +18,36 @@ deny  sh     gh issue create        :: gh issue create --title x --body y
 deny  sh     gh issue comment       :: gh issue comment 7 --body hi
 allow sh     gh issue view          :: gh issue view 7 --comments
 deny  sh     create sub-issues      :: bash scripts/factory/create-issues.sh --from-pr 3 --yes
+# Pushing the current branch with a shell redirect or pipe after it.
+allow sh     push with 2>&1             :: git push -u origin HEAD 2>&1
+allow sh     push branch to /dev/null   :: git push origin {branch} >/dev/null 2>&1
+allow sh     push stderr to a file      :: git push -u origin HEAD 2> .agent-work/push.log
+allow sh     push piped to tail         :: git push -u origin HEAD 2>&1 | tail -5
+allow sh     push redirect no spaces    :: git push -u origin HEAD>/dev/null 2>&1&&echo ok
+deny  sh     push main with 2>&1        :: git push origin main 2>&1
+deny  sh     push other branch          :: git push origin agent/other-branch
+deny  sh     second push to main        :: git push -u origin HEAD && git push origin main
+deny  sh     push main after a cd       :: cd . && git push origin main >/dev/null
+# Push words only inside quoted text (commit message, PR title or body) are not a push.
+allow sh     commit message says push   :: git commit -m "docs: git push origin main is denied" && git push -u origin HEAD
+allow sh     single-quoted push words   :: git commit -m 'never git push origin main; ok' && git push origin HEAD 2>&1
+allow sh     pr body says push          :: git push -u origin HEAD && gh pr create --title "Fix git push" --body "Run git push origin main 2>&1 | tee x"
+allow sh     heredoc commit message     :: git commit -F - <<'MSG'\nfix: git push origin main with 2>&1\nMSG\ngit push -u origin HEAD 2>&1
+allow sh     heredoc in substitution    :: git commit -m "$(cat <<'EOF'\nfix: handle git push origin main (see #1)\nEOF\n)" && git push -u origin HEAD
+deny  sh     quoted main refspec        :: git push origin "main"
+deny  sh     push inside bash -c        :: bash -c 'git push origin main'
+deny  sh     push in command subst      :: echo "$(git push origin main)"
+@checkout main
+allow sh     commit on main says push   :: git commit -m "then git push origin HEAD"
+deny  sh     push from main with 2>&1   :: git push -u origin HEAD 2>&1
+# Changing into a worktree first: the branch of that directory counts, not the main checkout's.
+@worktree agent/wt-push
+allow sh     cd worktree then push      :: cd {worktree} && git push -u origin HEAD 2>&1
+allow sh     git -C worktree push       :: git -C {worktree} push -u origin HEAD
+allow sh     cd worktree push its name  :: cd {worktree} && git push origin agent/wt-push
+deny  sh     cd worktree push main      :: cd {worktree} && git push origin main
+deny  sh     subshell cd does not stick :: (cd {worktree}) && git push -u origin HEAD
+@checkout -
+@worktree feature/wt-human
+deny  sh     cd non-agent worktree push :: cd {worktree} && git push -u origin HEAD
+deny  sh     git -C non-agent worktree  :: git -C {worktree} push origin HEAD

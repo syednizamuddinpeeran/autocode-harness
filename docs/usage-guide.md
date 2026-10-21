@@ -67,6 +67,8 @@ The factory never guesses requirements:
 - `run-issue.sh` first runs `scripts/factory/check-ready.sh` on the issue body. If Goal, Acceptance criteria, Out of scope or Risk is missing or still a placeholder, it lists what to fix and exits (code 4) **before any agent starts**. Run it with no issue number and it tells you how to create one (code 2).
 - If the issue is filled in but still unclear (untestable criteria, contradictions, undefined terms, unstated edge cases), the agent stops at intake, before planning, and writes `questions.md`. `run-issue.sh` shows the questions and offers to post them on the issue (code 5). Answer them in the issue and run again. On the cloud agent the questions appear as the draft PR's description.
 
+If the agent ends with commits on its branch but no open pull request for it (its push or PR was blocked or failed), `run-issue.sh` says the work is committed but not pushed and exits with code 7, so a batch shows that issue as "needs you".
+
 Too big for one run? After planning, the factory checks the plan against `scripts/factory/complexity.env`. If it exceeds a limit, no code is written: the planner proposes a breakdown, `run-issue.sh` saves it and exits with code 6, and you create the sub-issues with `create-issues.sh`. `run-batch.sh <parent>` then runs the unblocked ones in parallel. See [breakdown.md](breakdown.md).
 
 Tips: one outcome per issue; name real files in Pointers; mark risk `high` for auth, payments, migrations, public APIs, infra (result will be a draft PR).

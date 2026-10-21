@@ -23,7 +23,7 @@ The agent runs with broad tool permissions (`--allow-all-tools` locally), so saf
 | 2 | Copilot CLI sandbox (local; you enable it) | OS-level filesystem/network limits — see [sandboxing.md](sandboxing.md) | Writes outside the worktree, reads of denied paths |
 | 3 | CLI deny flags (local) | `--deny-tool 'shell(git push --force)'`, `shell(gh pr merge)`, `shell(sudo)` | Force-push, merge, sudo |
 | 4 | `preToolUse` guard | `guard.sh` + `policy/deny-commands.txt` + `deny-paths.txt` | The threat table above for shell commands and file tools |
-| 5 | Push rule in guard | `git push` only from `agent/*` or `copilot/*`, only the current branch | Pushes to the base branch or other refs |
+| 5 | Push rule in guard | `git push` only from `agent/*` or `copilot/*`, only the current branch. The guard parses the command line: it judges each push by the branch of the directory it runs in (after `cd <dir>` or `git -C <dir>`), ignores redirections (`2>&1`) and quoted text (commit messages, PR bodies), and also checks commands inside `$( )`, `bash -c` and `eval` | Pushes to the base branch or other refs |
 | 6 | Instructions | `AGENTS.md` hard rules; issue text treated as data | Honest mistakes, naive injection |
 | 7 | Stop gate | `stop-gate.sh` + `check.sh` state-hash marker | Finishing with unverified changes |
 | 8 | Audit log | `log.sh` on 11 events, secrets redacted | Undetected activity; supports review |
