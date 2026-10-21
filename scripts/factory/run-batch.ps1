@@ -19,6 +19,8 @@ $root = (git rev-parse --show-toplevel)
 Set-Location -LiteralPath $root
 . (Join-Path $root '.github/hooks/scripts/common.ps1')
 $limits = Read-FactoryEnvFile (Join-Path $root 'scripts/factory/complexity.env')
+$commands = Read-FactoryEnvFile (Join-Path $root 'scripts/factory/commands.env')
+$base = if ($commands['BASE_BRANCH']) { $commands['BASE_BRANCH'] } else { 'main' }
 if (-not $Parallel) { $Parallel = if ($limits['MAX_PARALLEL']) { [int]($limits['MAX_PARALLEL']) } else { 3 } }
 if ($Parallel -lt 1) { throw '-Parallel must be a positive number' }
 $poll = if ($env:BATCH_POLL_SECONDS) { [int]$env:BATCH_POLL_SECONDS } else { 60 }
@@ -43,7 +45,14 @@ function Get-State([string]$n) {
   if ($st[$n] -ne 'open') { return 'done' }
   if ($procs.ContainsKey($n)) { return 'running' }
   if ($rc.ContainsKey($n) -and $rc[$n] -ne 0) { return 'stopped' }
-  if ($rc.ContainsKey($n) -or (Test-Path -LiteralPath (Join-Path $wtRoot "issue-$n"))) { return 'review' }
+  if ($rc.ContainsKey($n)) { return 'review' }
+  # Started by an earlier batch: commits mean it awaits review; none mean it stopped (questions, breakdown).
+  $wt = Join-Path $wtRoot "issue-$n"
+  if (Test-Path -LiteralPath $wt) {
+    $ahead = git -C $wt rev-list --count "origin/$base..HEAD" 2>$null
+    if ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0) { return 'review' }
+    return 'stopped'
+  }
   if (-not $blockers[$n].Trim()) { return 'ready' }
   'blocked'
 }
