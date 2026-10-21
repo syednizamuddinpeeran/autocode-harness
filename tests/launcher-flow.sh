@@ -238,6 +238,15 @@ out="$(bash scripts/factory/run-batch.sh 7 2>&1)"; rc=$?
 check "github: run-batch runs the unblocked sub-issue" 0 "$rc"
 grep -q "start    #9" <<<"$out" && ! grep -q "start    #10" <<<"$out" || { echo "FAIL github: run-batch started the wrong sub-issues"; echo "$out"; fail=1; }
 [[ -d "$tmp/gh-worktrees/issue-9" ]] || { echo "FAIL github: sub-issue 9 did not get its own worktree"; fail=1; }
+# A later batch: a worktree without commits is a stopped run (questions, breakdown), not one awaiting
+# review, so --auto-continue must not wait for its PR; a worktree with commits is awaiting review.
+out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
+grep -qE "#9 +needs you" <<<"$out" || { echo "FAIL github: a worktree without commits is not shown as needing you"; echo "$out"; fail=1; }
+BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue >/dev/null 2>&1; rc=$?
+[[ $rc -ne 124 ]] || { echo "FAIL github: run-batch --auto-continue waits for a stopped sub-issue"; fail=1; }
+(cd "$tmp/gh-worktrees/issue-9" && echo w > work.txt && git add work.txt && git commit -qm "feat: work")
+out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
+grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL github: a worktree with commits is not shown as awaiting review"; echo "$out"; fail=1; }
 printf '9 closed\n10 closed\n11 closed\n' > "$FAKE_SUBS"
 out="$(bash scripts/factory/run-batch.sh 7 2>&1)"; rc=$?
 grep -q "All sub-issues of #7 are closed" <<<"$out" || { echo "FAIL github: closed sub-issues not recognised"; fail=1; }

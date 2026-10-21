@@ -38,7 +38,10 @@ for tool in git gh jq; do command -v "$tool" >/dev/null || { echo "Missing: $too
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 # shellcheck disable=SC1091
+source scripts/factory/commands.env
+# shellcheck disable=SC1091
 source scripts/factory/complexity.env
+base="${BASE_BRANCH:-main}"
 parallel="${parallel:-${MAX_PARALLEL:-3}}"
 [[ "$parallel" =~ ^[1-9][0-9]*$ ]] || { echo "--parallel must be a positive number" >&2; exit 1; }
 poll="${BATCH_POLL_SECONDS:-60}"
@@ -66,7 +69,13 @@ state() {
   [[ "${st[$n]}" == open ]] || { echo closed; return; }
   [[ -n "${pid[$n]:-}" ]] && { echo running; return; }
   [[ -n "${rc[$n]:-}" && "${rc[$n]}" != 0 ]] && { echo stopped; return; }
-  [[ -n "${rc[$n]:-}" || -d "$wt_root/issue-$n" ]] && { echo review; return; }
+  [[ -n "${rc[$n]:-}" ]] && { echo review; return; }
+  # Started by an earlier batch: commits mean it awaits review; none mean it stopped (questions, breakdown).
+  if [[ -d "$wt_root/issue-$n" ]]; then
+    if [[ "$(git -C "$wt_root/issue-$n" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0)" -gt 0 ]]; then
+      echo review; else echo stopped; fi
+    return
+  fi
   [[ -z "${blockers[$n]// /}" ]] && { echo ready; return; }
   echo blocked
 }
