@@ -71,7 +71,7 @@ Lines starting with `#` are comments. Humans edit; agents cannot.
 
 ## Log format
 
-One JSON line per event in `.agent-logs/<sessionId>.jsonl`: `ts`, `event`, `branch`, `surface` (`cloud` or `cli`), the hook payload (strings clipped to 4000 chars), and for `preToolUse` `decision` (`allow`/`deny`) and `reason`. `index.jsonl` records session start/end. Useful queries are in [usage-guide.md](usage-guide.md#logs).
+One JSON line per event in `.agent-logs/<YYYY-MM-DDTHH-MM-SSZ>-<session>/<session>.jsonl` (the folder name is the UTC start time of the session; later events of the same session append to the same file): `ts`, `event`, `branch`, `surface` (`cloud` or `cli`), the hook payload (strings clipped to 4000 chars), and for `preToolUse` `decision` (`allow`/`deny`) and `reason`. `index.jsonl` (directly under `.agent-logs/`) records session start/end. The location is still `.agent-logs/`, and the deny policy files in `.github/hooks/policy/` are unchanged. Useful queries are in [usage-guide.md](usage-guide.md#logs).
 
 ## Guard decision contract
 

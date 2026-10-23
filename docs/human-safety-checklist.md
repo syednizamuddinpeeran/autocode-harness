@@ -22,9 +22,9 @@ The agent is guarded, not trusted. These are the things only you can do.
 - [ ] Read the PR description: Ready vs Draft, unmet ACs, **Decisions** (implementation choices), **Risks / follow-ups**. Requirements are never assumed: if the agent asked questions, answer them in the issue.
 - [ ] If the agent proposed a breakdown: read every item before `create-issues` / `create-tasks` (each becomes a work item an agent will act on), check the dependencies, and that the items together deliver the whole parent issue.
 - [ ] Review denied actions — the agent was trying something:
-  `jq -c 'select(.decision=="deny")' <worktree>/.agent-logs/*.jsonl` (local only; cloud logs are discarded).
+  `jq -c 'select(.decision=="deny")' <worktree>/.agent-logs/*/*.jsonl` (local only; cloud logs are discarded).
 - [ ] Skim what the agent ran:
-  `jq -c 'select(.event=="preToolUse") | {tool: .toolName, args: .toolArgs}' <worktree>/.agent-logs/*.jsonl`
+  `jq -c 'select(.event=="preToolUse") | {tool: .toolName, args: .toolArgs}' <worktree>/.agent-logs/*/*.jsonl`
 
 ## Before merging (read the diff yourself)
 - [ ] The PR touches only the files the issue needed.
