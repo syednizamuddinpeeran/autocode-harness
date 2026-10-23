@@ -122,7 +122,22 @@ if command -v script >/dev/null; then
   # Run new-draft in a pseudo-terminal; the fake analyst writes a draft with an OPEN item.
   out="$(FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv2 "add csv export"' /dev/null 2>&1)"; rc=$?
   check "local: new-draft saves the analyst's draft" 0 "$rc"
-  cmp -s "$fx/bad-open-question.md" .agent-work/drafts/csv2.md || { echo "FAIL local: draft not saved"; fail=1; }
+  d2=(.agent-work/drafts/*Z-csv2)
+  [[ "${#d2[@]}" == 1 && "${d2[0]}" =~ ^\.agent-work/drafts/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-csv2$ ]] \
+    || { echo "FAIL local: draft folder is not <UTC stamp>-csv2 (got: ${d2[*]})"; fail=1; }
+  cmp -s "$fx/bad-open-question.md" "${d2[0]}/draft.md" || { echo "FAIL local: draft not saved as draft.md in the dated folder"; fail=1; }
+  # A rerun with the same id reuses the folder.
+  FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv2 "add csv export"' /dev/null >/dev/null 2>&1
+  d2=(.agent-work/drafts/*Z-csv2)
+  check "local: new-draft rerun reuses the draft folder" 1 "${#d2[@]}"
+  # Changing DRAFTS_DIR in paths.env moves new drafts.
+  sed -i 's|^DRAFTS_DIR=.*|DRAFTS_DIR=elsewhere/drafts|' scripts/factory/paths.env
+  FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv3 "add csv export"' /dev/null >/dev/null 2>&1
+  d3=(elsewhere/drafts/*Z-csv3)
+  [[ -f "${d3[0]}/draft.md" ]] || { echo "FAIL local: draft not written under the configured DRAFTS_DIR"; fail=1; }
+  [[ ! -e .agent-work/drafts/csv3.md && -z "$(ls -d .agent-work/drafts/*csv3* 2>/dev/null)" ]] \
+    || { echo "FAIL local: draft still written under .agent-work/drafts after DRAFTS_DIR changed"; fail=1; }
+  git checkout -q scripts/factory/paths.env; rm -rf elsewhere
   grep -q "OPEN" <<<"$out" || { echo "FAIL local: new-draft did not report the OPEN item"; fail=1; }
   grep -q "create-task.sh" <<<"$out" || { echo "FAIL local: new-draft did not show the next step"; fail=1; }
   grep -q -- "-worktrees/draft-csv2" "$FAKE_LOG.analyst" || { echo "FAIL local: analyst did not run in a throwaway worktree"; fail=1; }
