@@ -51,7 +51,7 @@ poll="${BATCH_POLL_SECONDS:-60}"
 logs="$root/.agent-logs/batch"; mkdir -p "$logs"
 wt_root="${FACTORY_WORKTREE_ROOT:-$(dirname "$root")/$(basename "$root")-worktrees}"
 
-declare -A pid=() rc=() st=() blockers=()
+declare -A pid=() rc=() st=() blockers=() prs=()
 subs=()
 # gh api with retries: a failed call (e.g. a network timeout) is tried again up to BATCH_GH_RETRIES
 # times (default 3), BATCH_GH_RETRY_SECONDS apart (default 5), before the batch gives up (exit 1).
@@ -70,10 +70,11 @@ gh_api() {
     sleep "${BATCH_GH_RETRY_SECONDS:-5}"
   done
 }
-# Refresh sub-issue states and open blockers from GitHub.
+# Refresh sub-issue states and open blockers from GitHub, and look up the open PRs of the sub-issues
+# that have commits (the lookups are memoized here, so the start loop does not ask GitHub every poll).
 refresh() {
   local n s rows
-  subs=(); st=(); blockers=()
+  subs=(); st=(); blockers=(); prs=()
   rows="$(gh_api "repos/{owner}/{repo}/issues/$parent/sub_issues" --paginate --jq '.[] | "\(.number) \(.state)"')"
   while read -r n s; do
     [[ -n "$n" ]] || continue
@@ -83,20 +84,41 @@ refresh() {
         --jq '.[] | select(.state == "open") | "#\(.number)"' | tr '\n' ' ')"
     fi
   done <<<"$rows"
+  for n in "${subs[@]}"; do
+    if [[ "${st[$n]}" == open && "$(commits "$n")" -gt 0 ]]; then open_pr "$n" >/dev/null; fi
+  done
 }
-# State of one sub-issue: closed | running | stopped | review | blocked | ready
+# Commits on a sub-issue's worktree branch that are not on the base branch (0 when there is no worktree).
+commits() {
+  local n="$1"
+  [[ -d "$wt_root/issue-$n" ]] || { echo 0; return; }
+  git -C "$wt_root/issue-$n" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0
+}
+# Open PRs for a sub-issue's branch: 0 none, 1 one open. Empty when the lookup failed or there is no
+# branch (detached HEAD). Read-only, and a failed lookup does not stop the batch: the state stays "review".
+open_pr() {
+  local n="$1" branch
+  if [[ -z "${prs[$n]+x}" ]]; then
+    branch="$(git -C "$wt_root/issue-$n" branch --show-current 2>/dev/null || true)"
+    prs[$n]=""
+    [[ -z "$branch" ]] || prs[$n]="$(gh pr list --head "$branch" --state open --json number --jq length 2>/dev/null || true)"
+  fi
+  echo "${prs[$n]}"
+}
+# State of one sub-issue: closed | running | stopped | review | nopr | blocked | ready
 state() {
   local n="$1"
   [[ "${st[$n]}" == open ]] || { echo closed; return; }
   [[ -n "${pid[$n]:-}" ]] && { echo running; return; }
   [[ -n "${rc[$n]:-}" && "${rc[$n]}" != 0 ]] && { echo stopped; return; }
-  [[ -n "${rc[$n]:-}" ]] && { echo review; return; }
-  # Started by an earlier batch: commits mean it awaits review; none mean it stopped (questions, breakdown).
-  if [[ -d "$wt_root/issue-$n" ]]; then
-    if [[ "$(git -C "$wt_root/issue-$n" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0)" -gt 0 ]]; then
-      echo review; else echo stopped; fi
+  # Finished with exit 0 in this batch, or started by an earlier one with commits: it awaits a PR.
+  # Commits and no open PR is "nopr"; an open PR, or a failed lookup, is "review".
+  if [[ -n "${rc[$n]:-}" || "$(commits "$n")" -gt 0 ]]; then
+    if [[ "$(open_pr "$n")" == 0 ]]; then echo nopr; else echo review; fi
     return
   fi
+  # Started by an earlier batch with no commits: it stopped (questions, breakdown).
+  if [[ -d "$wt_root/issue-$n" ]]; then echo stopped; return; fi
   [[ -z "${blockers[$n]// /}" ]] && { echo ready; return; }
   echo blocked
 }
@@ -108,6 +130,7 @@ show() {
       closed)  printf '  #%-6s closed\n' "$n" ;;
       running) printf '  #%-6s running (log: .agent-logs/batch/issue-%s.log)\n' "$n" "$n" ;;
       review)  printf '  #%-6s started: review and merge its PR (worktree %s)\n' "$n" "$wt_root/issue-$n" ;;
+      nopr)    printf '  #%-6s needs you: commits but no PR, run open-pr or delete the worktree (worktree %s)\n' "$n" "$wt_root/issue-$n" ;;
       stopped) printf '  #%-6s needs you: see .agent-logs/batch/issue-%s.log (questions, breakdown or failure)\n' "$n" "$n" ;;
       blocked) printf '  #%-6s blocked by: %s\n' "$n" "${blockers[$n]}" ;;
       ready)   printf '  #%-6s ready\n' "$n" ;;
@@ -127,6 +150,8 @@ reap() {
       local r=0; wait "${pid[$n]}" || r=$?
       rc[$n]=$r; unset "pid[$n]"
       [[ $r -eq 0 ]] || failed=1
+      # Look the PR up here, in this shell: state() runs in subshells, which cannot fill the memo.
+      if [[ $r -eq 0 ]]; then open_pr "$n" >/dev/null; fi
       echo "finished #$n (exit $r)"
     fi
   done
