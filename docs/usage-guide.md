@@ -109,13 +109,19 @@ Repos set up before drafts, issue work and session logs moved to timestamped fol
 bash scripts/factory/migrate-paths.sh
 ```
 
+On Windows, run the PowerShell twin instead. It makes the same moves, prints the same lines and writes the same `.agent-work/.layout`:
+
+```powershell
+pwsh scripts/factory/migrate-paths.ps1
+```
+
 - Moves old flat drafts (`.agent-work/drafts/<id>.md` → `<DRAFTS_DIR>/<stamp>-<id>/draft.md`), old issue work (`.agent-work/issue-N/` → `<WORK_DIR>/<stamp>-issue-N/`) and old session logs (`.agent-logs/<session>.jsonl` → `.agent-logs/<stamp>-<session>/<session>.jsonl`).
 - If `DRAFTS_DIR` or `WORK_DIR` in `paths.env` changed since the last run, moves the stamped folders from the location recorded in `.agent-work/.layout` to the new one.
 - `<stamp>` is the item's modification time in UTC. Each move is printed as `from -> to`.
 - Refuses the whole run (exit 1, nothing moved) if a destination already exists, or if a new location is inside the old one. Nothing is overwritten.
 - Writes `.agent-work/.layout` only after all moves succeed, so a failed run is finished by running it again. `index.jsonl` and `batch/` stay where they are. A second run on a migrated tree moves nothing.
 - To roll back a run, reverse the printed `from -> to` lines and delete `.agent-work/.layout`.
-- There is no PowerShell version: on Windows run it from Git Bash or WSL.
+- `migrate-paths.ps1` is the PowerShell twin of `migrate-paths.sh`. `tests/migrate-paths.ps1` checks it against the same fixtures, and against the bash script when bash is on PATH.
 
 ## Logs
 
