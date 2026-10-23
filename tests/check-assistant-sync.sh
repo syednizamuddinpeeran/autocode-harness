@@ -26,5 +26,15 @@ while IFS= read -r f; do
     echo "body differs: $f vs $other"; diff <(body "$f") <(body "$other") | head -10; fail=1
   fi
 done < <(find copilot -type f \( -name '*.agent.md' -o -name SKILL.md \) | sort)
+# These skills take their work folder from the prompt; a literal .agent-work path would pin it again.
+literal='\.agent-work/(issue-N|ID|<id>)'
+for s in implementation-plan breakdown verify-changes; do
+  for f in "claude-code/.claude/skills/$s/SKILL.md" "copilot/.github/skills/$s/SKILL.md"; do
+    [[ -f "$f" ]] || { echo "missing skill: $f"; fail=1; continue; }
+    while IFS= read -r hit; do
+      echo "literal work path in $f: line ${hit%%:*}"; fail=1
+    done < <(grep -nE "$literal" "$f")
+  done
+done
 echo "assistant sync: $checked files checked, $([[ $fail -eq 0 ]] && echo ok || echo FAILED)"
 exit $fail
