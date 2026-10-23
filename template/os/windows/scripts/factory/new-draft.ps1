@@ -5,8 +5,8 @@
 #   pwsh scripts/factory/new-draft.ps1 -Id csv-export "add CSV export to the reports page"
 #
 # Starts an interactive session with the `analyst` agent, which asks you questions and writes only
-# what you answer (unanswered items are marked OPEN). Result: <DRAFTS_DIR>/<YYYY-MM-DDTHH-MM-SSZ>-<id>/draft.md
-# (DRAFTS_DIR is set in paths.env; a rerun with the same id reuses the folder). Review it, then run
+# what you answer (unanswered items are marked OPEN). Result: <DRAFTS_DIR>/<YYYY-MM-DDTHH-MM-SSZ>-<id>/draft.md,
+# plus questions-and-answers.md beside it (DRAFTS_DIR is set in paths.env; a rerun with the same id reuses the folder). Review it, then run
 # create-issue.ps1 (GitHub) or create-task.ps1 (local). Runs in a throwaway worktree.
 param([Parameter(Position = 0)][string]$Brief, [string]$Id)
 $ErrorActionPreference = 'Stop'
@@ -52,18 +52,28 @@ try {
   Set-Location -LiteralPath $wt
   & pwsh -NoProfile -File scripts/factory/setup.ps1 | Out-Null
   $draft = '.agent-work/draft.md'
+  $qa = '.agent-work/questions-and-answers.md'
+  $qaOut = Join-Path $outDir 'questions-and-answers.md'
   if ($existing) { Copy-Item -LiteralPath $out -Destination $draft -Force }
   $cont = if ($existing) { ' (it already contains an earlier draft: continue from it, keep their answers)' } else { '' }
+  $qaExisting = Test-Path -LiteralPath $qaOut
+  if ($qaExisting) { Copy-Item -LiteralPath $qaOut -Destination $qa -Force }
+  $qaCont = if ($qaExisting) { ' (it already holds earlier questions and answers: read it first and append to it)' } else { '' }
   $prompt = @"
 Brief from the human: "$Brief"
 Help them turn it into a complete issue/task by asking questions (your analyst workflow). Write the
-draft to $draft$cont. Ask your first question now.
+draft to $draft$cont. Also record each question and the human's answer, in order, in $qa$qaCont.
+Ask your first question now.
 "@
   . (Join-Path $wt 'scripts/factory/agent-cli.ps1')
   Invoke-AgentChat -Assistant $cfg['ASSISTANT'] -Agent analyst -Prompt $prompt -ForbiddenEnv $cfg['FORBIDDEN_ENV']
 
   if (-not (Test-Path -LiteralPath $draft) -or (Get-Item -LiteralPath $draft).Length -eq 0) { [Console]::Error.WriteLine('No draft was written.'); exit 1 }
   Copy-Item -LiteralPath $draft -Destination $out -Force
+  if ((Test-Path -LiteralPath $qa) -and (Get-Item -LiteralPath $qa).Length -gt 0) {
+    Copy-Item -LiteralPath $qa -Destination $qaOut -Force
+    Write-Output "Questions and answers saved: $qaOut"
+  }
 } finally {
   Set-Location -LiteralPath $root
   git worktree remove --force $wt 2>$null | Out-Null

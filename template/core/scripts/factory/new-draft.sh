@@ -8,8 +8,8 @@
 # acceptance criteria, edge cases, out of scope, data/security, risk — and writes only what you
 # answer; anything you leave unanswered is marked OPEN. It never changes code or creates anything.
 #
-# Result: <DRAFTS_DIR>/<YYYY-MM-DDTHH-MM-SSZ>-<id>/draft.md (DRAFTS_DIR is set in paths.env; a rerun
-# with the same id reuses the folder). Review and edit it, then create it yourself:
+# Result: <DRAFTS_DIR>/<YYYY-MM-DDTHH-MM-SSZ>-<id>/draft.md, plus questions-and-answers.md beside it
+# (DRAFTS_DIR is set in paths.env; a rerun with the same id reuses the folder). Review and edit it, then create it yourself:
 #   GitHub repos:  scripts/factory/create-issue.sh <that draft.md>
 #   Local repos:   scripts/factory/create-task.sh  <that draft.md>
 #
@@ -60,15 +60,23 @@ trap cleanup EXIT
 cd "$wt"
 bash scripts/factory/setup.sh >/dev/null
 draft=".agent-work/draft.md"
+qa=".agent-work/questions-and-answers.md"
+qa_out="${out_dir%/}/questions-and-answers.md"
 cont=""
 if [[ -e "$out" ]]; then
   cp "$out" "$draft"
   cont=" (it already contains an earlier draft: continue from it, keep their answers)"
 fi
+qa_cont=""
+if [[ -e "$qa_out" ]]; then
+  cp "$qa_out" "$qa"
+  qa_cont=" (it already holds earlier questions and answers: read it first and append to it)"
+fi
 
 prompt="Brief from the human: \"${brief}\"
 Help them turn it into a complete issue/task by asking questions (your analyst workflow). Write the
-draft to ${draft}${cont}. Ask your first question now."
+draft to ${draft}${cont}. Also record each question and the human's answer, in order, in ${qa}${qa_cont}.
+Ask your first question now."
 
 # shellcheck source=agent-cli.sh
 source scripts/factory/agent-cli.sh
@@ -79,6 +87,10 @@ if [[ ! -s "$draft" ]]; then
   exit 1
 fi
 cp "$draft" "$out"
+if [[ -s "$qa" ]]; then
+  cp "$qa" "$qa_out"
+  echo "Questions and answers saved: $qa_out"
+fi
 echo
 echo "Draft saved: $out"
 echo
