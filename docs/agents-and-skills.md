@@ -31,7 +31,9 @@ The factory stops with a draft PR if work needs secrets, infra changes or edits 
 | `verify-changes` | factory | Runs `check.sh`, tees to `verify.log`, summarises failures as `check \| file:line \| cause`. Never edits checks or tests |
 | `open-pr` | factory | Cloud: pushes commits and fills the PR description (platform creates the PR). Local: `git push` + `gh pr create` from the standard body. Never merges |
 
-## Artifacts per run (`.agent-work/issue-N/`)
+The repo-layer skills `issue-intake`, `open-pr`, `task-intake` and `handoff` write into the work folder named by the prompt's `Work folder: <path>` line. They never assume a fixed path. If that line is missing, the skill stops with an error instead of falling back to a default location.
+
+## Artifacts per run (the run's work folder)
 
 `issue.json` (local) → `brief.md` → `plan.md` (→ `breakdown.md` if too big) → `verify.log` → `review.md` → `decisions.md` → `pr-body.md`
 
