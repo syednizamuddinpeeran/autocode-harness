@@ -78,7 +78,7 @@ elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL
   echo $(( $(cat "$FAKE_GH_API_FAIL") - 1 )) > "$FAKE_GH_API_FAIL"
   echo "Get \"https://api.github.com/$2\": dial tcp: i/o timeout" >&2; exit 1
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
-  cat "$FAKE_SUBS"          # already in the --jq output form: "<number> <state>"
+  cat "${FAKE_SUBS:-/dev/null}"   # already in the --jq output form: "<number> <state>" (create-issues: "<number>\t<title>")
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
   n="${2%/dependencies/blocked_by}"; cat "$FAKE_BLOCKED.${n##*/}" 2>/dev/null || true   # "#<number>" of open blockers
 elif [[ "$1" == api ]]; then
@@ -456,6 +456,37 @@ grep -qx "Depends on: #9, #10" "$FAKE_GH_CREATE.body.11" || { echo "FAIL github:
 grep -qx "agent-ready" "$FAKE_GH_CREATE" && { echo "FAIL github: blocked sub-issue got the agent-ready label"; fail=1; }
 grep -qx "Parent: #7" "$FAKE_GH_CREATE.body.9" || { echo "FAIL github: sub-issue parent missing"; fail=1; }
 grep -qx "7" "$FAKE_GH_COMMENT" || { echo "FAIL github: summary not commented on the parent"; fail=1; }
+
+# github: a rerun reuses a sub-issue that already exists under the parent (matched by exact title)
+seq_keep="$(cat "$FAKE_GH_SEQ")"; echo 20 > "$FAKE_GH_SEQ"   # the rerun's creates get #21 and #22
+printf '15\tExport service\n' > "$tmp/subs-reuse"             # item 1 was created by an earlier run as #15
+rm -f "$FAKE_GH_API" "$FAKE_GH_CREATE"
+out="$(FAKE_SUBS="$tmp/subs-reuse" bash scripts/factory/create-issues.sh .agent-work/breakdowns/issue-7.md --yes 2>&1)"; rc=$?
+check "github: create-issues rerun with an existing sub-issue exits 0" 0 "$rc"
+check "github: rerun creates only the missing items (#21, #22)" 22 "$(cat "$FAKE_GH_SEQ")"
+grep -q "Reused #15: Export service" <<<"$out" || { echo "FAIL github: reused sub-issue not reported"; echo "$out"; fail=1; }
+grep -q "Created #21: Export button" <<<"$out" || { echo "FAIL github: missing item not created"; echo "$out"; fail=1; }
+check "github: reused item looked up only for its id" 1 "$(grep -c 'issues/15 ' "$FAKE_GH_API")"
+grep -qx "Export audit log" "$FAKE_GH_CREATE" || { echo "FAIL github: last create is not the last item"; fail=1; }
+# The reused item is linked again and is the blocker of the items that depend on it.
+for want in "issues/7/sub_issues -F sub_issue_id=1015" "issues/7/sub_issues -F sub_issue_id=1021" "issues/7/sub_issues -F sub_issue_id=1022" \
+            "issues/21/dependencies/blocked_by -F issue_id=1015" "issues/22/dependencies/blocked_by -F issue_id=1015" "issues/22/dependencies/blocked_by -F issue_id=1021"; do
+  grep -q -- "$want" "$FAKE_GH_API" || { echo "FAIL github: rerun missing gh api call: $want"; cat "$FAKE_GH_API"; fail=1; }
+done
+grep -qx "Depends on: #15" "$FAKE_GH_CREATE.body.21" || { echo "FAIL github: rerun body does not name the reused number"; fail=1; }
+grep -qx "Depends on: #15, #21" "$FAKE_GH_CREATE.body.22" || { echo "FAIL github: rerun body names the wrong numbers"; fail=1; }
+grep -q "could not" <<<"$out" && { echo "FAIL github: rerun reported a failed link"; echo "$out"; fail=1; }
+
+# github: two items with the same title are refused before anything is created
+sed 's/^## Item 2: Export button/## Item 2: Export service/' "$bd/ok.md" > "$tmp/bd-dup.md"
+rm -f "$FAKE_GH_CREATE"; seq_before="$(cat "$FAKE_GH_SEQ")"
+out="$(bash scripts/factory/create-issues.sh "$tmp/bd-dup.md" --yes 2>&1)"; rc=$?
+check "github: create-issues refuses a duplicate title in the breakdown" 1 "$rc"
+grep -q 'Export service' <<<"$out" || { echo "FAIL github: duplicate title not named"; echo "$out"; fail=1; }
+[[ ! -e "$FAKE_GH_CREATE" ]] || { echo "FAIL github: an issue was created despite the duplicate title"; fail=1; }
+check "github: duplicate title creates nothing" "$seq_before" "$(cat "$FAKE_GH_SEQ")"
+echo "$seq_keep" > "$FAKE_GH_SEQ"
+
 export FAKE_PR_BODY="$bd/ok.md" FAKE_PR_HEAD="feature/x"
 bash scripts/factory/create-issues.sh --from-pr 9 --yes >/dev/null 2>&1; rc=$?
 check "github: create-issues --from-pr refuses a non-agent branch" 1 "$rc"

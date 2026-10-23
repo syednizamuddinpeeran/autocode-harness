@@ -70,6 +70,9 @@ fi
 [[ -n "$brief" ]] || echo "(No parent brief next to the breakdown: acceptance-criteria coverage was not checked — compare with issue #$parent yourself.)"
 
 mapfile -t order < "$items/order"
+# A rerun matches sub-issues by exact title, so two items with one title would be ambiguous: refuse.
+dup="$(for i in "${order[@]}"; do head -1 "$items/$i.md" | sed 's/^# //'; done | sort | uniq -d | sed -n 1p)"
+[[ -z "$dup" ]] || { echo "Two items of the breakdown have the title \"$dup\": rename one, then run again." >&2; exit 1; }
 echo
 echo "──────── Sub-issues of #$parent (in creation order)"
 for i in "${order[@]}"; do
@@ -86,36 +89,55 @@ fi
 
 declare -A num=() id=()
 summary=""
+# Sub-issues already under the parent, one "<number><TAB><title>" per line (all states, as run-batch.sh lists them).
+subs="$tmp/subs"
+gh api "repos/{owner}/{repo}/issues/$parent/sub_issues" --paginate --jq '.[] | "\(.number)\t\(.title)"' > "$subs"
+# Number of the sub-issue of the parent with exactly this title, if an earlier run created it.
+existing_sub() {
+  local n t
+  while IFS=$'\t' read -r n t; do [[ "$t" == "$1" ]] && { echo "$n"; return 0; }; done < "$subs"
+  return 0
+}
 for i in "${order[@]}"; do
   title="$(head -1 "$items/$i.md" | sed 's/^# //')"
-  body="$tmp/body-$i.md"
-  {
-    echo "Parent: #$parent"
-    # Body = item without its title; "Item k" references become issue numbers.
-    tail -n +2 "$items/$i.md" | while IFS= read -r line; do
-      if [[ "$line" == "Depends on:"* ]]; then
-        for k in "${!num[@]}"; do line="$(sed -E "s/Item $k([^0-9]|$)/#${num[$k]}\\1/g" <<<"$line")"; done
-      fi
-      printf '%s\n' "$line"
-    done
-  } > "$body"
-  # Only unblocked items get `agent-ready` (it starts the Claude action): label the others when their
-  # blockers are merged (run-batch.sh --list shows which are ready).
-  if [[ -s "$items/$i.deps" ]] || ! url="$(gh issue create --title "$title" --body-file "$body" --label agent-ready 2>/dev/null)"; then
-    url="$(gh issue create --title "$title" --body-file "$body")"
+  reused="$(existing_sub "$title")"
+  verb=Created
+  if [[ -n "$reused" ]]; then
+    # An earlier run stopped after creating it: keep it, and still link it and record its dependencies.
+    num[$i]="$reused" verb=Reused
+  else
+    body="$tmp/body-$i.md"
+    {
+      echo "Parent: #$parent"
+      # Body = item without its title; "Item k" references become issue numbers.
+      tail -n +2 "$items/$i.md" | while IFS= read -r line; do
+        if [[ "$line" == "Depends on:"* ]]; then
+          for k in "${!num[@]}"; do line="$(sed -E "s/Item $k([^0-9]|$)/#${num[$k]}\\1/g" <<<"$line")"; done
+        fi
+        printf '%s\n' "$line"
+      done
+    } > "$body"
+    # Only unblocked items get `agent-ready` (it starts the Claude action): label the others when their
+    # blockers are merged (run-batch.sh --list shows which are ready).
+    if [[ -s "$items/$i.deps" ]] || ! url="$(gh issue create --title "$title" --body-file "$body" --label agent-ready 2>/dev/null)"; then
+      url="$(gh issue create --title "$title" --body-file "$body")"
+    fi
+    num[$i]="${url##*/}"
   fi
-  num[$i]="${url##*/}"
   id[$i]="$(gh api "repos/{owner}/{repo}/issues/${num[$i]}" --jq .id)"
-  gh api -X POST "repos/{owner}/{repo}/issues/$parent/sub_issues" -F "sub_issue_id=${id[$i]}" >/dev/null \
-    || echo "  (could not add #${num[$i]} as a sub-issue of #$parent; link it by hand)" >&2
+  # "Already linked" / "already recorded" means an earlier run did this step: done.
+  if ! err="$(gh api -X POST "repos/{owner}/{repo}/issues/$parent/sub_issues" -F "sub_issue_id=${id[$i]}" 2>&1 >/dev/null)"; then
+    grep -qi already <<<"$err" || { echo "$err" >&2; echo "  (could not add #${num[$i]} as a sub-issue of #$parent; link it by hand)" >&2; }
+  fi
   deps=""
   while IFS= read -r d; do
     [[ -z "$d" ]] && continue
     deps+=" #${num[$d]}"
-    gh api -X POST "repos/{owner}/{repo}/issues/${num[$i]}/dependencies/blocked_by" -F "issue_id=${id[$d]}" >/dev/null \
-      || echo "  (could not record #${num[$i]} blocked by #${num[$d]}; the body still says 'Depends on')" >&2
+    if ! err="$(gh api -X POST "repos/{owner}/{repo}/issues/${num[$i]}/dependencies/blocked_by" -F "issue_id=${id[$d]}" 2>&1 >/dev/null)"; then
+      grep -qi already <<<"$err" || { echo "$err" >&2; echo "  (could not record #${num[$i]} blocked by #${num[$d]}; the body still says 'Depends on')" >&2; }
+    fi
   done < "$items/$i.deps"
-  echo "Created #${num[$i]}: $title${deps:+  (blocked by$deps)}"
+  echo "$verb #${num[$i]}: $title${deps:+  (blocked by$deps)}"
   summary+="- #${num[$i]} $title${deps:+ — after$deps}"$'\n'
 done
 
