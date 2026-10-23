@@ -256,12 +256,21 @@ check "github: agent questions exit 5" 5 "$rc"
 check "github: leftover branch without commits reused" "agent/issue-7-add-csv-export" \
   "$(git -C "$tmp/gh-worktrees/issue-7" branch --show-current 2>/dev/null)"
 grep -q "Which columns are exported" <<<"$out" || { echo "FAIL github: questions not shown"; fail=1; }
+# The work folder is a UTC-stamped one, and every rerun reuses it.
+stamped_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-issue-7$'
+wf=("$tmp"/gh-worktrees/issue-7/.agent-work/*Z-issue-7)
+check "github: one stamped work folder" 1 "${#wf[@]}"
+[[ "$(basename "${wf[0]}")" =~ $stamped_re ]] || { echo "FAIL github: work folder name not stamped: ${wf[0]}"; fail=1; }
+[[ -f "${wf[0]}/issue.json" ]] || { echo "FAIL github: issue.json not in the stamped folder"; fail=1; }
 
 # The agent ended without a result: no commits, no PR, no questions, no breakdown → exit 8, "needs you".
 out="$(bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
 check "github: run with no result exits 8" 8 "$rc"
 grep -q "produced no result" <<<"$out" || { echo "FAIL github: empty run not reported"; echo "$out"; fail=1; }
-[[ ! -e "$tmp/gh-worktrees/issue-7/.agent-work/issue-7/questions.md" ]] || { echo "FAIL github: stale questions.md kept"; fail=1; }
+wf2=("$tmp"/gh-worktrees/issue-7/.agent-work/*Z-issue-7)
+check "github: rerun reuses the stamped folder" "${wf[0]}" "${wf2[0]}"
+check "github: rerun leaves one stamped folder" 1 "${#wf2[@]}"
+[[ ! -e "${wf2[0]}/questions.md" ]] || { echo "FAIL github: stale questions.md kept"; fail=1; }
 
 # github: the agent committed but opened no PR (e.g. its push was blocked) → exit 7, "needs you"
 out="$(FAKE_AGENT=commit bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
@@ -270,6 +279,18 @@ grep -q "committed but not pushed" <<<"$out" || { echo "FAIL github: unpushed wo
 grep -qx "agent/issue-7-add-csv-export" "$FAKE_GH_PR_LIST" || { echo "FAIL github: PR not looked up for the issue branch"; fail=1; }
 out="$(FAKE_PR_OPEN=1 bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
 check "github: committed with an open PR exits 0" 0 "$rc"
+wf3=("$tmp"/gh-worktrees/issue-7/.agent-work/*Z-issue-7)
+check "github: reruns after exit 7 still leave one stamped folder" 1 "${#wf3[@]}"
+# A changed WORK_DIR in the paths file is picked up by the next run.
+pf="$tmp/gh-worktrees/issue-7/scripts/factory/paths.env"; orig_paths="$(<"$pf")"
+sed -i 's|^WORK_DIR=.*|WORK_DIR=elsewhere/work|' "$pf"
+out="$(FAKE_PR_OPEN=1 bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
+check "github: run with a changed WORK_DIR exits 0" 0 "$rc"
+nw=("$tmp"/gh-worktrees/issue-7/elsewhere/work/*Z-issue-7)
+[[ -f "${nw[0]}/issue.json" ]] || { echo "FAIL github: changed WORK_DIR not used"; fail=1; }
+wf4=("$tmp"/gh-worktrees/issue-7/.agent-work/*Z-issue-7)
+check "github: nothing new under the old location" 1 "${#wf4[@]}"
+printf '%s\n' "$orig_paths" > "$pf"
 # A leftover branch WITH commits and no worktree is kept, never reset: the new worktree is attached to it.
 git worktree remove --force "$tmp/gh-worktrees/issue-7"
 out="$(FAKE_PR_OPEN=1 bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?

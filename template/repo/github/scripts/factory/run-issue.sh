@@ -83,7 +83,9 @@ else
 fi
 cd "$wt"
 bash scripts/factory/setup.sh
-work=".agent-work/issue-${issue}"
+# shellcheck source=/dev/null
+. scripts/factory/lib-paths.sh
+work="$(reuse_folder "issue-${issue}")"; work="${work%/}"
 mkdir -p "$work"
 rm -f "$work/questions.md" "$work/breakdown.md"
 printf '%s\n' "$json" > "$work/issue.json"
