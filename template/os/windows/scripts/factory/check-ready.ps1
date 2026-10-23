@@ -6,19 +6,27 @@ $lines = Get-Content -LiteralPath $File
 
 # Section text: lines after "## Name" / "### Name" up to the next heading, without HTML comments,
 # template placeholders (<…>), "_No response_" (empty issue-form field) and blank lines.
-function Get-Section([string]$Name) {
+# -KeepAngleLines is the exception, used for Goal only: a Goal may contain <…> words such as
+# "Ship <name> to <env>". Its <…> tokens are removed first, and a line counts only if something
+# alphanumeric is left, so an unfilled template line like "<describe the user-visible outcome>" is still empty.
+function Get-Section([string]$Name, [switch]$KeepAngleLines) {
   $on = $false
   foreach ($l in $lines) {
     if ($l -match '^###?[ \t]+(.*?)[ \t]*$') { $on = ($Matches[1] -ieq $Name); continue }
     if (-not $on) { continue }
     $t = $l -replace '<!--.*-->', ''
+    if ($KeepAngleLines) {
+      $t = $t -replace '<[^>]+>', ''
+      if ($t -match '[A-Za-z0-9]' -and $t -notmatch '^\s*_No response_\s*$') { $t }
+      continue
+    }
     if ($t -match '<[^>]+>' -or $t -match '^\s*_No response_\s*$' -or $t -match '^\s*$') { continue }
     $t
   }
 }
 
 $problems = @()
-if (-not @(Get-Section 'Goal')) { $problems += 'Goal is empty: describe the user-visible outcome in 1-2 sentences.' }
+if (-not @(Get-Section 'Goal' -KeepAngleLines)) { $problems += 'Goal is empty: describe the user-visible outcome in 1-2 sentences.' }
 if (-not (@(Get-Section 'Acceptance criteria') | Where-Object { $_ -match '^\s*([-*]|[0-9]+\.)\s+\S' })) {
   $problems += 'Acceptance criteria: add at least one testable criterion (Given / when / then).'
 }
