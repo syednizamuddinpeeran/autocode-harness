@@ -583,6 +583,26 @@ if command -v pwsh >/dev/null; then
   check "ps: breakdown run with a recorded draft exits 6" 6 "$rc"
   cmp -s "$bd/ok.md" "$ld/breakdown.md" || { echo "FAIL ps: breakdown.md not filed in the recorded draft folder"; fail=1; }
   [[ ! -e "$ld/questions.md" ]] || { echo "FAIL ps: questions.md filed after a breakdown run"; fail=1; }
+
+  # run-batch.ps1 shows the same states as run-batch.sh for a worktree with commits (issue #158): no open PR
+  # is "needs you" and not waited for; an open PR for its branch is "started: review"; a failed PR lookup
+  # keeps "started: review".
+  printf '9 open\n10 open\n11 open\n' > "$FAKE_SUBS"
+  git -C "$ps" worktree add -q -b agent/issue-9-ps "$tmp/ps-worktrees/issue-9" origin/main
+  (cd "$tmp/ps-worktrees/issue-9" && echo w > work.txt && git add work.txt && git commit -qm "feat: work")
+  psbr9="$(git -C "$tmp/ps-worktrees/issue-9" branch --show-current)"
+  out="$(pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"; rc=$?
+  check "ps batch: -List exits 0 with a worktree with commits and no PR" 0 "$rc"
+  grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" && ! grep -qE "#9 +started: review" <<<"$out" \
+    || { echo "FAIL ps batch: a worktree with commits and no PR is not shown as needing you"; echo "$out"; fail=1; }
+  BATCH_POLL_SECONDS=1 timeout 60 pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -AutoContinue >/dev/null 2>&1; rc=$?
+  [[ $rc -ne 124 ]] || { echo "FAIL ps batch: -AutoContinue waits for a commits-but-no-PR sub-issue"; fail=1; }
+  out="$(FAKE_OPEN_PR_HEADS="$psbr9" pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"
+  grep -qE "#9 +started: review and merge its PR" <<<"$out" || { echo "FAIL ps batch: a worktree with commits and an open PR is not shown as awaiting review"; echo "$out"; fail=1; }
+  echo 99 > "$tmp/ps-gh-fail-pulls"
+  out="$(FAKE_GH_API_FAIL="$tmp/ps-gh-fail-pulls" FAKE_GH_API_FAIL_ON=pulls pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"; rc=$?
+  check "ps batch: -List exits 0 when the open-PR lookup fails" 0 "$rc"
+  grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL ps batch: a failed open-PR lookup does not keep started: review"; echo "$out"; fail=1; }
   shopt -u nullglob
 else
   echo "skip ps launcher flow (pwsh not installed)"
