@@ -4,6 +4,8 @@
 # prints <location>/<YYYY-MM-DDTHH-MM-SSZ>-<slug>/ (UTC stamp), where the location comes from paths.env.
 #   reuse_folder <slug>
 # prints the newest existing <WORK_DIR>/<stamp>-<slug>/, else a new one like new_folder work <slug>.
+#   find_draft <value>
+# prints the <DRAFTS_DIR>/<folder>/ whose created.txt has number=<value> or task=<value>; nothing if none.
 _paths_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$_paths_dir/paths.env"
@@ -26,4 +28,17 @@ reuse_folder() {
     [[ -d "$d" ]] && best="$d"
   done
   if [[ -n "$best" ]]; then printf '%s/\n' "$best"; else new_folder work "$1"; fi
+}
+
+find_draft() {
+  [[ -n "${1:-}" ]] || { echo "find_draft: value required" >&2; return 2; }
+  local f
+  for f in "${DRAFTS_DIR%/}"/*/created.txt; do
+    [[ -f "$f" ]] || continue
+    if grep -qxF -e "number=$1" -e "task=$1" "$f"; then
+      printf '%s/\n' "$(dirname "$f")"
+      return 0
+    fi
+  done
+  return 0
 }
