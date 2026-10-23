@@ -7,8 +7,10 @@ $lines = Get-Content -LiteralPath $File
 # Section text: lines after "## Name" / "### Name" up to the next heading, without HTML comments,
 # template placeholders (<…>), "_No response_" (empty issue-form field) and blank lines.
 # -KeepAngleLines is the exception, used for Goal only: a Goal may contain <…> words such as
-# "Ship <name> to <env>". Its <…> tokens are removed first, and a line counts only if something
-# non-blank is left, so an unfilled template line like "<describe the user-visible outcome>" is still empty.
+# "Ship <name> to <env>". Its <…> tokens are removed first, and a line counts only if something other
+# than ASCII space or tab is left, so an unfilled template line like "<describe the user-visible outcome>"
+# is still empty. Non-ASCII characters count as text (no \s: U+3000 or U+00A0 alone is not empty), to
+# match check-ready.sh in every locale.
 function Get-Section([string]$Name, [switch]$KeepAngleLines) {
   $on = $false
   foreach ($l in $lines) {
@@ -17,7 +19,7 @@ function Get-Section([string]$Name, [switch]$KeepAngleLines) {
     $t = $l -replace '<!--.*-->', ''
     if ($KeepAngleLines) {
       $t = $t -replace '<[^>]+>', ''
-      if ($t -match '\S' -and $t -notmatch '^\s*_No response_\s*$') { $t }
+      if ($t -match '[^ \t]' -and $t -notmatch '^\s*_No response_\s*$') { $t }
       continue
     }
     if ($t -match '<[^>]+>' -or $t -match '^\s*_No response_\s*$' -or $t -match '^\s*$') { continue }

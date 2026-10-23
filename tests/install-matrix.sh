@@ -52,6 +52,13 @@ run_one() {
   [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-angle.md: want exit 0 and ready, got $got: $out"; return 1; }
   out="$(LC_ALL=C bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-unicode.md")"; got=$?
   [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-unicode.md (LC_ALL=C): want exit 0 and ready, got $got: $out"; return 1; }
+  out="$(LC_ALL=C.UTF-8 bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-unicode.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-unicode.md (LC_ALL=C.UTF-8): want exit 0 and ready, got $got: $out"; return 1; }
+  # A Goal line of U+3000 only is text (blank means ASCII space or tab only), so it is ready in every locale.
+  out="$(LC_ALL=C bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-ideographic-space.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-ideographic-space.md (LC_ALL=C): want exit 0 and ready, got $got: $out"; return 1; }
+  out="$(LC_ALL=C.UTF-8 bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-ideographic-space.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-ideographic-space.md (LC_ALL=C.UTF-8): want exit 0 and ready, got $got: $out"; return 1; }
   out="$(bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/bad-goal-placeholder.md")"; got=$?
   [[ $got -eq 4 && "$(grep -c '^  - ' <<<"$out")" -eq 1 ]] && grep -q 'Goal is empty' <<<"$out" \
     || { echo "check-ready bad-goal-placeholder.md: want exit 4 with only the Goal problem, got $got: $out"; return 1; }

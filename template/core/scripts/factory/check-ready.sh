@@ -17,15 +17,17 @@ file="${1:?usage: check-ready.sh <file.md>}"
 # Section text: lines after "## Name" / "### Name" up to the next heading, without HTML comments,
 # template placeholders (<…>), "_No response_" (empty issue-form field) and blank lines.
 # Mode "goal" is the exception: a Goal may contain <…> words such as "Ship <name> to <env>". Its
-# <…> tokens are removed first, and a line counts only if something non-blank is left, so an
-# unfilled template line like "<describe the user-visible outcome>" is still empty.
+# <…> tokens are removed first, and a line counts only if something is left other than ASCII space or
+# tab, so an unfilled template line like "<describe the user-visible outcome>" is still empty. Any
+# non-ASCII character counts as text (blank is ASCII-only, so U+3000 or U+00A0 alone is not empty),
+# which keeps the verdict the same in every locale and in PowerShell.
 section() {
   awk -v name="$1" '
     /^###?[ \t]+/ { h = $0; sub(/^#+[ \t]+/, "", h); sub(/[ \t]+$/, "", h); on = (tolower(h) == tolower(name)); next }
     on { print }
   ' "$file" | sed -E 's/<!--.*-->//g' | {
     if [[ "${2:-}" == goal ]]; then
-      sed -E 's/<[^>]+>//g' | grep -E '[^[:space:]]' | grep -Ev '^[[:space:]]*_No response_[[:space:]]*$'
+      sed -E 's/<[^>]+>//g' | grep -E '[^ 	]' | grep -Ev '^[[:space:]]*_No response_[[:space:]]*$'
     else
       grep -Ev '<[^>]+>|^[[:space:]]*_No response_[[:space:]]*$|^[[:space:]]*$'
     fi
