@@ -85,9 +85,14 @@ elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL
   # Simulated network failure: the next <count in $FAKE_GH_API_FAIL> matching api calls fail.
   echo $(( $(cat "$FAKE_GH_API_FAIL") - 1 )) > "$FAKE_GH_API_FAIL"
   echo "Get \"https://api.github.com/$2\": dial tcp: i/o timeout" >&2; exit 1
+elif [[ "$1" == api && -n "${FAKE_GH_POST_FAIL:-}" && "$*" == *"-X POST"* && "$*" == *"$FAKE_GH_POST_FAIL"* ]]; then
+  # Simulated rejected POST to a matching path: the attempt is recorded, then it fails.
+  echo "${*:2}" >> "$FAKE_GH_API"
+  echo "HTTP 422: Validation Failed" >&2; exit 1
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
   cat "$FAKE_SUBS"          # already in the --jq output form: "<number> <state>"
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
+  [[ -n "${FAKE_GH_BLOCKED_READS:-}" ]] && echo "$2" >> "$FAKE_GH_BLOCKED_READS"   # GET paths read by run-batch
   n="${2%/dependencies/blocked_by}"; cat "$FAKE_BLOCKED.${n##*/}" 2>/dev/null || true   # "#<number>" of open blockers
 elif [[ "$1" == api ]]; then
   echo "${*:2}" >> "$FAKE_GH_API"
@@ -457,13 +462,27 @@ check "github: create-issues creates the sub-issues" 0 "$rc"
 grep -q "could not" <<<"$out" && { echo "FAIL github: create-issues reported a failed link"; fail=1; }
 # Issues 9, 10, 11 (ids 1009..1011): all sub-issues of #7; 10 blocked by 9; 11 blocked by 9 and 10.
 for want in "issues/7/sub_issues -F sub_issue_id=1009" "issues/7/sub_issues -F sub_issue_id=1010" "issues/7/sub_issues -F sub_issue_id=1011" \
-            "issues/10/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1010"; do
+            "issues/10/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1010" \
+            "issues/7/dependencies/blocked_by -F issue_id=1009" "issues/7/dependencies/blocked_by -F issue_id=1010" "issues/7/dependencies/blocked_by -F issue_id=1011"; do
   grep -q -- "$want" "$FAKE_GH_API" || { echo "FAIL github: missing gh api call: $want"; fail=1; }
 done
 grep -qx "Depends on: #9, #10" "$FAKE_GH_CREATE.body.11" || { echo "FAIL github: sub-issue dependencies not rewritten"; fail=1; }
 grep -qx "agent-ready" "$FAKE_GH_CREATE" && { echo "FAIL github: blocked sub-issue got the agent-ready label"; fail=1; }
 grep -qx "Parent: #7" "$FAKE_GH_CREATE.body.9" || { echo "FAIL github: sub-issue parent missing"; fail=1; }
 grep -qx "7" "$FAKE_GH_COMMENT" || { echo "FAIL github: summary not commented on the parent"; fail=1; }
+# github: a rejected parent blocked-by call is a warning naming both issues; creation carries on
+seq_before="$(cat "$FAKE_GH_SEQ")"; echo 8 > "$FAKE_GH_SEQ"
+out="$(FAKE_GH_POST_FAIL=issues/7/dependencies/blocked_by bash scripts/factory/create-issues.sh .agent-work/breakdowns/issue-7.md --yes 2>&1)"; rc=$?
+check "github: create-issues survives a rejected parent blocked-by call" 0 "$rc"
+grep -q "could not record parent #7 as blocked by #9" <<<"$out" || { echo "FAIL github: no warning naming parent #7 and #9"; echo "$out"; fail=1; }
+grep -q "Created #11:" <<<"$out" || { echo "FAIL github: creation stopped after a rejected parent blocked-by call"; echo "$out"; fail=1; }
+echo "$seq_before" > "$FAKE_GH_SEQ"
+# github: the PowerShell twin records the same parent blocked-by call and warning (static check; pwsh not needed)
+ps1="$root/template/os/windows/_repo/github/scripts/factory/create-issues.ps1"
+grep -qF 'issues/$Parent/dependencies/blocked_by" -F "issue_id=$($id[[int]$i])"' "$ps1" \
+  || { echo "FAIL windows: create-issues.ps1 does not record the parent as blocked by each sub-issue"; fail=1; }
+grep -qF 'could not record parent #$Parent as blocked by #$($num[[int]$i])' "$ps1" \
+  || { echo "FAIL windows: create-issues.ps1 parent blocked-by warning missing or differs from create-issues.sh"; fail=1; }
 export FAKE_PR_BODY="$bd/ok.md" FAKE_PR_HEAD="feature/x"
 bash scripts/factory/create-issues.sh --from-pr 9 --yes >/dev/null 2>&1; rc=$?
 check "github: create-issues --from-pr refuses a non-agent branch" 1 "$rc"
@@ -472,9 +491,20 @@ check "github: create-issues refuses an invalid breakdown" 4 "$rc"
 
 # github: run the sub-issues whose blockers are closed (run-batch)
 export FAKE_SUBS="$tmp/subs" FAKE_BLOCKED="$tmp/blocked" FAKE_ISSUE_BODY="$fx/ok-issue-form.md"
+export FAKE_GH_BLOCKED_READS="$tmp/gh-blocked-reads"
 printf '9 open\n10 open\n11 open\n' > "$FAKE_SUBS"; echo "#9" > "$FAKE_BLOCKED.10"; printf '#9\n#10\n' > "$FAKE_BLOCKED.11"
+rm -f "$FAKE_GH_BLOCKED_READS"
 out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
 grep -qE "#9 +ready" <<<"$out" && grep -qE "#11 +blocked by: #9 #10" <<<"$out" || { echo "FAIL github: run-batch --list states wrong"; echo "$out"; fail=1; }
+# AC5: run-batch reads each sub-issue's blockers and never the parent's; the --list lines are unchanged.
+grep -qE "#10 +blocked by: #9 *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #10 changed"; echo "$out"; fail=1; }
+grep -qE "#9 +ready *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #9 changed"; echo "$out"; fail=1; }
+grep -qE "#11 +blocked by: #9 #10 *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #11 changed"; echo "$out"; fail=1; }
+for want in issues/9/dependencies/blocked_by issues/10/dependencies/blocked_by issues/11/dependencies/blocked_by; do
+  grep -qF "$want" "$FAKE_GH_BLOCKED_READS" 2>/dev/null || { echo "FAIL github: run-batch did not read $want"; fail=1; }
+done
+! grep -qE "issues/7/dependencies/blocked_by" "$FAKE_GH_BLOCKED_READS" 2>/dev/null \
+  || { echo "FAIL github: run-batch read the parent's blockers (issues/7/dependencies/blocked_by)"; fail=1; }
 # A failing GitHub API call is retried; one that succeeds on retry keeps the batch going.
 export BATCH_GH_RETRY_SECONDS=0
 echo 2 > "$tmp/gh-fail"

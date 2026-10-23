@@ -108,6 +108,8 @@ for i in "${order[@]}"; do
   id[$i]="$(gh api "repos/{owner}/{repo}/issues/${num[$i]}" --jq .id)"
   gh api -X POST "repos/{owner}/{repo}/issues/$parent/sub_issues" -F "sub_issue_id=${id[$i]}" >/dev/null \
     || echo "  (could not add #${num[$i]} as a sub-issue of #$parent; link it by hand)" >&2
+  gh api -X POST "repos/{owner}/{repo}/issues/$parent/dependencies/blocked_by" -F "issue_id=${id[$i]}" >/dev/null \
+    || echo "  (could not record parent #$parent as blocked by #${num[$i]}; link it by hand)" >&2
   deps=""
   while IFS= read -r d; do
     [[ -z "$d" ]] && continue
