@@ -77,6 +77,10 @@ elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL
   # Simulated network failure: the next <count in $FAKE_GH_API_FAIL> matching api calls fail.
   echo $(( $(cat "$FAKE_GH_API_FAIL") - 1 )) > "$FAKE_GH_API_FAIL"
   echo "Get \"https://api.github.com/$2\": dial tcp: i/o timeout" >&2; exit 1
+elif [[ "$1" == api && -n "${FAKE_GH_POST_FAIL:-}" && "$*" == *"-X POST"* && "$*" == *"$FAKE_GH_POST_FAIL"* ]]; then
+  # Simulated rejected POST to a matching path: the attempt is recorded, then it fails.
+  echo "${*:2}" >> "$FAKE_GH_API"
+  echo "HTTP 422: Validation Failed" >&2; exit 1
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
   cat "$FAKE_SUBS"          # already in the --jq output form: "<number> <state>"
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
@@ -449,13 +453,21 @@ check "github: create-issues creates the sub-issues" 0 "$rc"
 grep -q "could not" <<<"$out" && { echo "FAIL github: create-issues reported a failed link"; fail=1; }
 # Issues 9, 10, 11 (ids 1009..1011): all sub-issues of #7; 10 blocked by 9; 11 blocked by 9 and 10.
 for want in "issues/7/sub_issues -F sub_issue_id=1009" "issues/7/sub_issues -F sub_issue_id=1010" "issues/7/sub_issues -F sub_issue_id=1011" \
-            "issues/10/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1010"; do
+            "issues/10/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1010" \
+            "issues/7/dependencies/blocked_by -F issue_id=1009" "issues/7/dependencies/blocked_by -F issue_id=1010" "issues/7/dependencies/blocked_by -F issue_id=1011"; do
   grep -q -- "$want" "$FAKE_GH_API" || { echo "FAIL github: missing gh api call: $want"; fail=1; }
 done
 grep -qx "Depends on: #9, #10" "$FAKE_GH_CREATE.body.11" || { echo "FAIL github: sub-issue dependencies not rewritten"; fail=1; }
 grep -qx "agent-ready" "$FAKE_GH_CREATE" && { echo "FAIL github: blocked sub-issue got the agent-ready label"; fail=1; }
 grep -qx "Parent: #7" "$FAKE_GH_CREATE.body.9" || { echo "FAIL github: sub-issue parent missing"; fail=1; }
 grep -qx "7" "$FAKE_GH_COMMENT" || { echo "FAIL github: summary not commented on the parent"; fail=1; }
+# github: a rejected parent blocked-by call is a warning naming both issues; creation carries on
+seq_before="$(cat "$FAKE_GH_SEQ")"; echo 8 > "$FAKE_GH_SEQ"
+out="$(FAKE_GH_POST_FAIL=issues/7/dependencies/blocked_by bash scripts/factory/create-issues.sh .agent-work/breakdowns/issue-7.md --yes 2>&1)"; rc=$?
+check "github: create-issues survives a rejected parent blocked-by call" 0 "$rc"
+grep -q "could not record parent #7 as blocked by #9" <<<"$out" || { echo "FAIL github: no warning naming parent #7 and #9"; echo "$out"; fail=1; }
+grep -q "Created #11:" <<<"$out" || { echo "FAIL github: creation stopped after a rejected parent blocked-by call"; echo "$out"; fail=1; }
+echo "$seq_before" > "$FAKE_GH_SEQ"
 export FAKE_PR_BODY="$bd/ok.md" FAKE_PR_HEAD="feature/x"
 bash scripts/factory/create-issues.sh --from-pr 9 --yes >/dev/null 2>&1; rc=$?
 check "github: create-issues --from-pr refuses a non-agent branch" 1 "$rc"
