@@ -38,6 +38,15 @@ Agents cannot edit `complexity.env` or the check scripts (guard `deny-paths`). C
 - records native [blocked-by dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies);
 - comments the plan on the parent.
 
+If it stops partway (for example a network error), run it again on the same breakdown. It is safe to repeat:
+- an item whose title is already a sub-issue of the parent (any state) is reused, not created again. It is still linked to the parent, its blocked-by dependencies are still recorded, and its number is used in the `Depends on` lines of the other items. A reused issue's body, labels and state are left as they are;
+- before each retry of a create, the script looks for the title among the parent's sub-issues and among issues whose first body line is `Parent: #<N>`, so a create that succeeded on GitHub but lost its reply is not repeated;
+- two items with the same title in one breakdown are refused before anything is created, and the message names the title;
+- every `gh` call is retried like `run-batch` does: up to `BATCH_GH_RETRIES` times (default 3), `BATCH_GH_RETRY_SECONDS` apart (default 5). When the retries run out, the script names the call that failed and exits 1. Running it again is safe;
+- a completed rerun posts the parent comment again, listing all items (created and reused).
+
+A missing `agent-ready` label makes each labelled create fail its retries first (about 15 seconds with the defaults) before the unlabelled create runs. Each attempt still looks for the title first, so nothing is duplicated.
+
 `--from-pr` only accepts PRs on `copilot/*` or `agent/*` branches. `--from-issue` only reads comments by the `claude` / `github-actions` bots.
 
 `create-tasks` writes `tasks/<parent>.<n>.md`, with `Parent:` and `Depends on:` naming task ids. It appends `## Broken down into` to the parent task and commits everything in one commit on the base branch.

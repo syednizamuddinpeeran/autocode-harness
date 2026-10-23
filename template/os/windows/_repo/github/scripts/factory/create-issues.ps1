@@ -7,6 +7,7 @@
 # Validates the breakdown (check-breakdown.ps1), shows every item, asks for confirmation, then — with
 # your gh credentials — creates the issues in dependency order, adds them to the parent as native
 # sub-issues, records native "blocked by" dependencies, and comments the plan on the parent.
+# A rerun on the same breakdown is safe: sub-issues already there are reused by title.
 param([Parameter(Position = 0)][string]$Breakdown, [int]$FromPr, [int]$FromIssue, [int]$Parent, [switch]$Yes)
 $ErrorActionPreference = 'Stop'
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'Missing: gh' }
@@ -60,6 +61,10 @@ try {
   if (-not $brief) { Write-Output "(No parent brief next to the breakdown: acceptance-criteria coverage was not checked — compare with issue #$Parent yourself.)" }
 
   $order = @(Get-Content -LiteralPath (Join-Path $items 'order') | Where-Object { $_ })
+  # A rerun matches sub-issues by exact title, so two items with one title would be ambiguous: refuse.
+  $titles = @(foreach ($i in $order) { (Get-Content -LiteralPath (Join-Path $items "$i.md") -TotalCount 1) -replace '^# ', '' })
+  $dup = $titles | Group-Object -CaseSensitive | Where-Object { $_.Count -gt 1 } | Select-Object -First 1
+  if ($dup) { [Console]::Error.WriteLine("Two items of the breakdown have the title `"$($dup.Name)`": rename one, then run again."); exit 1 }
   Write-Output ''
   Write-Output "──────── Sub-issues of #$Parent (in creation order)"
   foreach ($i in $order) { Write-Output ''; Write-Output "── Item $i"; Get-Content -LiteralPath (Join-Path $items "$i.md") }
@@ -71,26 +76,41 @@ try {
   }
 
   $num = @{}; $id = @{}; $summary = ''
+  # Sub-issues already under the parent, one "<number><TAB><title>" line each (all states, as run-batch.ps1 lists them).
+  $subLines = @(gh api "repos/{owner}/{repo}/issues/$Parent/sub_issues" --paginate --jq '.[] | "\(.number)\t\(.title)"')
+  if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("Could not list the sub-issues of #$Parent."); exit 1 }
+  # Number of the sub-issue of the parent with exactly this title, if an earlier run created it.
+  function Get-ExistingSub([string]$Title) {
+    foreach ($row in $subLines) { $n, $t = $row -split "`t", 2; if ($t -ceq $Title) { return $n } }
+    return $null
+  }
   foreach ($i in $order) {
     $lines = @(Get-Content -LiteralPath (Join-Path $items "$i.md"))
     $title = $lines[0] -replace '^# ', ''
-    $body = Join-Path $tmp "body-$i.md"
-    # Body = item without its title; "Item k" references become issue numbers.
-    $out = @("Parent: #$Parent")
-    foreach ($l in ($lines | Select-Object -Skip 1)) {
-      if ($l -match '^Depends on:') { $l = [regex]::Replace($l, 'Item ([0-9]+)(?![0-9])', { param($m) if ($num[[int]$m.Groups[1].Value]) { "#$($num[[int]$m.Groups[1].Value])" } else { $m.Value } }) }
-      $out += $l
+    $reused = Get-ExistingSub $title
+    $verb = 'Created'
+    if ($reused) {
+      # An earlier run stopped after creating it: keep it, and still link it and record its dependencies.
+      $num[[int]$i] = $reused; $verb = 'Reused'
+    } else {
+      $body = Join-Path $tmp "body-$i.md"
+      # Body = item without its title; "Item k" references become issue numbers.
+      $out = @("Parent: #$Parent")
+      foreach ($l in ($lines | Select-Object -Skip 1)) {
+        if ($l -match '^Depends on:') { $l = [regex]::Replace($l, 'Item ([0-9]+)(?![0-9])', { param($m) if ($num[[int]$m.Groups[1].Value]) { "#$($num[[int]$m.Groups[1].Value])" } else { $m.Value } }) }
+        $out += $l
+      }
+      [System.IO.File]::WriteAllText($body, (($out -join "`n") + "`n"))
+      # Only unblocked items get `agent-ready` (it starts the Claude action): label the others when their
+      # blockers are merged (run-batch.ps1 -List shows which are ready).
+      $blocked = [bool](Get-Content -LiteralPath (Join-Path $items "$i.deps") | Where-Object { $_ })
+      if (-not $blocked) { $url = gh issue create --title $title --body-file $body --label agent-ready 2>$null }
+      if ($blocked -or $LASTEXITCODE -ne 0) {
+        $url = gh issue create --title $title --body-file $body
+        if ($LASTEXITCODE -ne 0) { throw 'gh issue create failed' }
+      }
+      $num[[int]$i] = ($url -split '/')[-1]
     }
-    [System.IO.File]::WriteAllText($body, (($out -join "`n") + "`n"))
-    # Only unblocked items get `agent-ready` (it starts the Claude action): label the others when their
-    # blockers are merged (run-batch.ps1 -List shows which are ready).
-    $blocked = [bool](Get-Content -LiteralPath (Join-Path $items "$i.deps") | Where-Object { $_ })
-    if (-not $blocked) { $url = gh issue create --title $title --body-file $body --label agent-ready 2>$null }
-    if ($blocked -or $LASTEXITCODE -ne 0) {
-      $url = gh issue create --title $title --body-file $body
-      if ($LASTEXITCODE -ne 0) { throw 'gh issue create failed' }
-    }
-    $num[[int]$i] = ($url -split '/')[-1]
     $id[[int]$i] = gh api "repos/{owner}/{repo}/issues/$($num[[int]$i])" --jq .id
     gh api -X POST "repos/{owner}/{repo}/issues/$Parent/sub_issues" -F "sub_issue_id=$($id[[int]$i])" | Out-Null
     if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("  (could not add #$($num[[int]$i]) as a sub-issue of #$Parent; link it by hand)") }
@@ -100,7 +120,7 @@ try {
       gh api -X POST "repos/{owner}/{repo}/issues/$($num[[int]$i])/dependencies/blocked_by" -F "issue_id=$($id[[int]$d])" | Out-Null
       if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("  (could not record #$($num[[int]$i]) blocked by #$($num[[int]$d]); the body still says 'Depends on')") }
     }
-    Write-Output "Created #$($num[[int]$i]): $title$(if ($deps) { "  (blocked by$deps)" })"
+    Write-Output "$verb #$($num[[int]$i]): $title$(if ($deps) { "  (blocked by$deps)" })"
     $summary += "- #$($num[[int]$i]) $title$(if ($deps) { " — after$deps" })`n"
   }
 
