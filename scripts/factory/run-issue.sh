@@ -12,7 +12,7 @@
 # script shows it and how to create the sub-issues (create-issues.sh).
 #
 # Exit codes: 0 done, 2 no issue given, 4 issue not ready, 5 agent needs answers, 6 breakdown proposed,
-# other = CLI error.
+# 7 work committed but not pushed (no open PR for the branch), other = CLI error.
 # Safety layers: separate worktree + agent/* branch, the CLI's sandbox (enable once with
 # /sandbox), CLI tool denies (agent-cli.sh), preToolUse guard hook, branch protection on GitHub.
 set -euo pipefail
@@ -113,5 +113,22 @@ if [[ -s "$work/breakdown.md" ]]; then
   echo
   echo "Review and edit it, then create the sub-issues:  scripts/factory/create-issues.sh $saved/issue-${issue}.md"
   exit 6
+fi
+
+# The agent committed work but no pull request is open for its branch (its push or PR failed or
+# was blocked): the work is only in this worktree, so a person has to look.
+cur_branch="$(git branch --show-current)"
+ahead="$(git rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0)"
+if [[ "$ahead" -gt 0 ]]; then
+  open_prs="$(gh pr list --head "$cur_branch" --state open --json number --jq length 2>/dev/null || true)"
+  if [[ ! "$open_prs" =~ ^[1-9][0-9]*$ ]]; then
+    echo
+    echo "── Issue #$issue: the work is committed but not pushed: $ahead commit(s) on $cur_branch, and no open"
+    echo "   pull request for it. It is only in the worktree $wt."
+    echo "   Check the run's output for a blocked push, then push the branch and open the PR yourself, or"
+    echo "   run again to let the agent finish."
+    [[ "$rc" -ne 0 ]] && exit "$rc"
+    exit 7
+  fi
 fi
 exit "$rc"
