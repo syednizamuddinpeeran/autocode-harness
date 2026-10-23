@@ -14,6 +14,7 @@
 #     questions.md / breakdown.md filed in the recorded draft folder as in bash
 #   - windows (pwsh, skipped without pwsh): run-task.ps1 uses the stamped work folder, names it in the prompt,
 #     and files questions / breakdown in the recorded draft folder
+#   - windows (pwsh, skipped without pwsh): create-issues.ps1 reuses sub-issues by title and refuses a duplicate title
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fx="$root/tests/fixtures/ready"
@@ -666,6 +667,39 @@ if command -v pwsh >/dev/null; then
   shopt -u nullglob
 else
   echo "skip ps launcher flow (pwsh not installed)"
+fi
+
+# ---- github repo, Windows create-issues (create-issues.ps1, needs pwsh) ----
+# The reuse and duplicate-title rules of create-issues.sh, run with pwsh -File on the same fixture.
+if command -v pwsh >/dev/null; then
+  setup_repo github "$tmp/psc" windows
+  mkdir -p .agent-work/breakdowns && cp "$bd/ok.md" .agent-work/breakdowns/issue-7.md && cp "$bd/brief.md" .agent-work/breakdowns/issue-7.brief.md
+  echo 20 > "$FAKE_GH_SEQ"; rm -f "$FAKE_GH_API" "$FAKE_GH_CREATE"
+  printf '15\tExport service\n' > "$tmp/subs-reuse-ps"   # item 1 was created by an earlier run as #15
+  out="$(FAKE_SUBS="$tmp/subs-reuse-ps" pwsh -NoProfile -File scripts/factory/create-issues.ps1 .agent-work/breakdowns/issue-7.md -Yes 2>&1)"; rc=$?
+  check "ps: create-issues rerun with an existing sub-issue exits 0" 0 "$rc"
+  check "ps: rerun creates only the missing items (#21, #22)" 22 "$(cat "$FAKE_GH_SEQ")"
+  grep -q "Reused #15: Export service" <<<"$out" || { echo "FAIL ps: reused sub-issue not reported"; echo "$out"; fail=1; }
+  grep -q "Created #21: Export button" <<<"$out" || { echo "FAIL ps: missing item not created"; echo "$out"; fail=1; }
+  check "ps: reused item looked up only for its id" 1 "$(grep -c 'issues/15 ' "$FAKE_GH_API")"
+  grep -qx "Export audit log" "$FAKE_GH_CREATE" || { echo "FAIL ps: last create is not the last item"; fail=1; }
+  for want in "issues/7/sub_issues -F sub_issue_id=1015" "issues/7/sub_issues -F sub_issue_id=1021" "issues/7/sub_issues -F sub_issue_id=1022" \
+              "issues/21/dependencies/blocked_by -F issue_id=1015" "issues/22/dependencies/blocked_by -F issue_id=1015" "issues/22/dependencies/blocked_by -F issue_id=1021"; do
+    grep -q -- "$want" "$FAKE_GH_API" || { echo "FAIL ps: rerun missing gh api call: $want"; cat "$FAKE_GH_API"; fail=1; }
+  done
+  grep -qx "Depends on: #15" "$FAKE_GH_CREATE.body.21" || { echo "FAIL ps: rerun body does not name the reused number"; fail=1; }
+  grep -qx "Depends on: #15, #21" "$FAKE_GH_CREATE.body.22" || { echo "FAIL ps: rerun body names the wrong numbers"; fail=1; }
+  grep -q "could not" <<<"$out" && { echo "FAIL ps: rerun reported a failed link"; echo "$out"; fail=1; }
+
+  # two items with the same title are refused before anything is created
+  rm -f "$FAKE_GH_CREATE"; seq_before="$(cat "$FAKE_GH_SEQ")"
+  out="$(pwsh -NoProfile -File scripts/factory/create-issues.ps1 "$tmp/bd-dup.md" -Yes 2>&1)"; rc=$?
+  check "ps: create-issues refuses a duplicate title in the breakdown" 1 "$rc"
+  grep -q 'Export service' <<<"$out" || { echo "FAIL ps: duplicate title not named"; echo "$out"; fail=1; }
+  [[ ! -e "$FAKE_GH_CREATE" ]] || { echo "FAIL ps: an issue was created despite the duplicate title"; fail=1; }
+  check "ps: duplicate title creates nothing" "$seq_before" "$(cat "$FAKE_GH_SEQ")"
+else
+  echo "skip ps create-issues checks (pwsh not installed)"
 fi
 
 [[ $fail -eq 0 ]] && echo "launcher flow: all passed"
