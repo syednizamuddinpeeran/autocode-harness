@@ -24,10 +24,12 @@ factory_redact() {
 }
 
 # factory_log <event> <payload-json> [extra-json]
-# Appends one JSON line to .agent-logs/<sessionId>.jsonl and to index.jsonl.
+# Appends one JSON line to <logs>/<UTC-timestamp>Z-<sessionId>/<sessionId>.jsonl (the folder is created
+# on the session's first event) and, for session start/end, to <logs>/index.jsonl.
 factory_log() {
   local event="$1" payload="$2" extra="${3:-}"
-  local dir sid ts line
+  local dir sid ts line sdir
+  local -a found
   [[ -z "$extra" ]] && extra='{}'
   dir="$(factory_log_dir)"
   ts="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -43,7 +45,14 @@ factory_log() {
   line="$(jq -nc --arg e "$event" --arg ts "$ts" --arg raw "${payload:0:4000}" \
       '{ts: $ts, event: $e, unparsed: $raw}')"
 
-  printf '%s\n' "$line" | factory_redact >> "$dir/$sid.jsonl"
+  found=("$dir"/????-??-??T??-??-??Z-"$sid")
+  if [[ -d "${found[0]:-}" ]]; then
+    sdir="${found[0]}"
+  else
+    sdir="$dir/$(date -u +%Y-%m-%dT%H-%M-%SZ)-$sid"
+    mkdir -p "$sdir" 2>/dev/null || true
+  fi
+  printf '%s\n' "$line" | factory_redact >> "$sdir/$sid.jsonl"
   if [[ "$event" == "sessionStart" || "$event" == "sessionEnd" ]]; then
     jq -c --arg sid "$sid" '{ts, event, sessionId: $sid, branch, surface, reason, source}' <<<"$line" \
       2>/dev/null | factory_redact >> "$dir/index.jsonl"

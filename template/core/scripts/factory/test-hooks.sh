@@ -84,9 +84,25 @@ echo "y" >> new.txt
 [[ "$(stop | jq -r .decision)" == "block" ]] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: stop gate should block after a new edit"; }
 
 # logging
-[[ -s .agent-logs/test.jsonl ]] && jq -e . .agent-logs/test.jsonl >/dev/null && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: log file missing or invalid JSONL"; }
+shopt -s nullglob
+folders=(.agent-logs/*Z-test)
+if [[ ${#folders[@]} -eq 1 && "$(basename "${folders[0]}")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-test$ \
+      && -s "${folders[0]}/test.jsonl" ]] && jq -e . "${folders[0]}/test.jsonl" >/dev/null; then
+  pass=$((pass+1))
+else fail=$((fail+1)); echo "FAIL: expected one UTC-timestamped session folder with a valid test.jsonl"; fi
+lines_before="$(wc -l < "${folders[0]}/test.jsonl")"
 echo '{"sessionId":"test","toolName":"bash","toolArgs":{"command":"echo ghp_abcdefghijklmnopqrstuvwxyz0123"}}' | bash .github/hooks/scripts/log.sh postToolUse
-grep -q 'ghp_abcdefghij' .agent-logs/test.jsonl && { fail=$((fail+1)); echo "FAIL: token not redacted"; } || pass=$((pass+1))
+folders=(.agent-logs/*Z-test)
+[[ ${#folders[@]} -eq 1 && "$(wc -l < "${folders[0]}/test.jsonl")" -gt "$lines_before" ]] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: same-session event should append to the existing folder"; }
+grep -q 'ghp_abcdefghij' "${folders[0]}/test.jsonl" && { fail=$((fail+1)); echo "FAIL: token not redacted"; } || pass=$((pass+1))
+echo '{"sessionId":"other","toolName":"bash","toolArgs":{"command":"true"}}' | bash .github/hooks/scripts/log.sh postToolUse
+others=(.agent-logs/*Z-other)
+[[ ${#others[@]} -eq 1 && -s "${others[0]}/other.jsonl" ]] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: a different session should get its own folder"; }
+[[ ! -e .agent-logs/test.jsonl ]] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: flat .agent-logs/test.jsonl should not exist"; }
+for f in deny-paths.txt deny-commands.txt; do
+  cmp -s ".github/hooks/policy/$f" "$src/.github/hooks/policy/$f" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: $f differs from source"; }
+done
+shopt -u nullglob
 
 echo "hooks self-test: $pass passed, $fail failed"
 [[ $fail -eq 0 ]]
