@@ -48,7 +48,7 @@ Hooks wrap every step (see [security-model.md](security-model.md)) and write an 
 | `.github/pull_request_template.md` | PR body layout | yes |
 | `scripts/factory/` | `commands.env`, `check.sh`, `setup.sh`, `run-issue.sh`, `test-hooks.sh`, `hook-cases.txt` (+ `.ps1` on Windows) | yes |
 | `.agent-work/issue-N/` | issue.json, brief, plan, verify.log, review, decisions, pr-body | no (gitignored) |
-| `.agent-logs/` | `<session>.jsonl`, `index.jsonl`, `.verified` marker | no (gitignored) |
+| `.agent-logs/` | `<YYYY-MM-DDTHH-MM-SSZ>-<session>/<session>.jsonl` (one UTC-timestamped folder per session), `index.jsonl`, `.verified` marker | no (gitignored) |
 | `../<repo>-worktrees/issue-N/` | Isolated checkout per local run | outside repo |
 
 ## Isolation model

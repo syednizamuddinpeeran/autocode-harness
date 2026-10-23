@@ -91,7 +91,7 @@ This fetches the issue with `gh`, creates `../<repo>-worktrees/issue-42` on `age
 Use [human-safety-checklist.md](human-safety-checklist.md). Local run artifacts:
 ```bash
 cat ../<repo>-worktrees/issue-42/.agent-work/issue-42/review.md
-jq -c 'select(.decision=="deny")' ../<repo>-worktrees/issue-42/.agent-logs/*.jsonl
+jq -c 'select(.decision=="deny")' ../<repo>-worktrees/issue-42/.agent-logs/*/*.jsonl
 ```
 Merge the PR on GitHub once CI is green and you have approved it. Agents never merge; the cloud agent cannot mark its PR ready for review, approve it or merge it.
 
@@ -103,11 +103,11 @@ git worktree remove ../<repo>-worktrees/issue-42 && git branch -d agent/issue-42
 
 ## Logs
 
-- Local: `.agent-logs/<sessionId>.jsonl` and `.agent-logs/index.jsonl`.
+- Local: each session is written to `.agent-logs/<YYYY-MM-DDTHH-MM-SSZ>-<session>/<session>.jsonl` (the timestamp is UTC); later events of the same session append to that file. `.agent-logs/index.jsonl` and `.agent-logs/.verified` stay directly under `.agent-logs/`. The location and the deny policy files in `.github/hooks/policy/` are unchanged.
 - Cloud: the environment is destroyed after the job, so hook logs are discarded. Use the agent session log on GitHub.
 
 ```bash
-jq -c 'select(.event=="preToolUse") | {ts, tool: .toolName, decision, reason}' .agent-logs/*.jsonl
-jq -c 'select(.decision=="deny")' .agent-logs/*.jsonl
-jq -c 'select(.event|test("subagent")) | {ts, event, agentName}' .agent-logs/*.jsonl
+jq -c 'select(.event=="preToolUse") | {ts, tool: .toolName, decision, reason}' .agent-logs/*/*.jsonl
+jq -c 'select(.decision=="deny")' .agent-logs/*/*.jsonl
+jq -c 'select(.event|test("subagent")) | {ts, event, agentName}' .agent-logs/*/*.jsonl
 ```
