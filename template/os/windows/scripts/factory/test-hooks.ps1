@@ -97,11 +97,26 @@ try {
   if ((Stop-Decision) -eq 'block') { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: stop gate should block after a new edit' }
 
   # logging
-  $log = (Get-ChildItem '.agent-logs' -Directory -Filter '*Z-test' | Select-Object -First 1).FullName + '/test.jsonl'
-  $valid = (Test-Path $log) -and @(Get-Content $log | Where-Object { $_ } | ForEach-Object { try { $_ | ConvertFrom-Json | Out-Null; $true } catch { $false } }) -notcontains $false
-  if ($valid) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: log file missing or invalid JSONL' }
+  $folders = @(Get-ChildItem '.agent-logs' -Directory -Filter '*Z-test')
+  $log = if ($folders.Count -eq 1) { Join-Path $folders[0].FullName 'test.jsonl' } else { '' }
+  $valid = $log -and (Test-Path $log) -and ((Get-Item $log).Length -gt 0) -and @(Get-Content $log | Where-Object { $_ } | ForEach-Object { try { $_ | ConvertFrom-Json | Out-Null; $true } catch { $false } }) -notcontains $false
+  if ($valid -and $folders[0].Name -match '^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-test$') { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: expected one UTC-timestamped session folder with a valid test.jsonl' }
+  $linesBefore = if ($log -and (Test-Path $log)) { @(Get-Content $log).Count } else { 0 }
   Invoke-Hook 'log.ps1' '{"sessionId":"test","toolName":"bash","toolArgs":{"command":"echo ghp_abcdefghijklmnopqrstuvwxyz0123"}}' @('postToolUse') | Out-Null
-  if (Select-String -Path $log -SimpleMatch 'ghp_abcdefghij' -Quiet) { $global:fail++; Write-Output 'FAIL: token not redacted' } else { $global:pass++ }
+  $folders = @(Get-ChildItem '.agent-logs' -Directory -Filter '*Z-test')
+  $log = if ($folders.Count -eq 1) { Join-Path $folders[0].FullName 'test.jsonl' } else { '' }
+  if ($log -and (Test-Path $log) -and (@(Get-Content $log).Count -gt $linesBefore)) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: same-session event should append to the existing folder' }
+  if ($log -and (Test-Path $log) -and -not (Select-String -Path $log -SimpleMatch 'ghp_abcdefghij' -Quiet)) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: token not redacted' }
+  Invoke-Hook 'log.ps1' '{"sessionId":"other","toolName":"bash","toolArgs":{"command":"true"}}' @('postToolUse') | Out-Null
+  $others = @(Get-ChildItem '.agent-logs' -Directory -Filter '*Z-other')
+  if ($others.Count -eq 1 -and (Test-Path (Join-Path $others[0].FullName 'other.jsonl')) -and ((Get-Item (Join-Path $others[0].FullName 'other.jsonl')).Length -gt 0)) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: a different session should get its own folder' }
+  $flat = @(Get-ChildItem '.agent-logs' -File -Filter '*.jsonl' | Where-Object { $_.Name -ne 'index.jsonl' })
+  if ($flat.Count -eq 0 -and -not (Test-Path '.agent-logs/test.jsonl')) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: no flat session .jsonl should exist directly under .agent-logs' }
+  $stray = @(Get-ChildItem '.agent-logs' -Directory | ForEach-Object { Get-ChildItem $_.FullName -File -Filter 'index.jsonl' })
+  if ($stray.Count -eq 0) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: index.jsonl must stay directly under .agent-logs' }
+  foreach ($f in 'deny-paths.txt', 'deny-commands.txt') {
+    if ((Get-FileHash ".github/hooks/policy/$f").Hash -eq (Get-FileHash (Join-Path $src ".github/hooks/policy/$f")).Hash) { $global:pass++ } else { $global:fail++; Write-Output "FAIL: $f differs from source" }
+  }
 } finally {
   Set-Location -LiteralPath $src
   Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
