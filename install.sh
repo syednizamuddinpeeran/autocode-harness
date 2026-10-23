@@ -106,6 +106,11 @@ while IFS= read -r f; do
     cp "$stage/$f" "$dst/.agent-work/harness/$f"
     echo "kept harness ($state): $f"; kept=$((kept + 1)); continue
   fi
+  if [[ "$f" == scripts/factory/paths.env && -e "$dst/$f" ]]; then
+    # The target's paths.env names its own folder locations, so it is never replaced, not even with --force.
+    if cmp -s "$stage/$f" "$dst/$f"; then echo "skip (exists): $f"; else echo "kept (your edits): $f"; fi
+    continue
+  fi
   if [[ -e "$dst/$f" && $force -eq 0 ]]; then
     echo "skip (exists): $f"; continue
   fi
@@ -121,6 +126,13 @@ for line in ".agent-logs/" ".agent-work/"; do
   grep -qxF "$line" "$gi" 2>/dev/null || echo "$line" >> "$gi"
 done
 chmod +x "$dst"/.github/hooks/scripts/*.sh "$dst"/scripts/factory/*.sh 2>/dev/null || true
+
+# Move factory files from an older layout to the locations the target's paths.env names (after the copy,
+# so the kept paths.env is the one read). On a default layout it moves nothing.
+(cd "$dst" && bash scripts/factory/migrate-paths.sh) || {
+  echo "install: migration failed (the copy is done). Fix it, then rerun: (cd $dst && bash scripts/factory/migrate-paths.sh)" >&2
+  exit 1
+}
 
 echo
 echo "Installed: repo=$repo os=$os assistant=$assistant cloud=$cloud"
