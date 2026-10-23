@@ -24,7 +24,7 @@ human can review and create. You write a proposal only: no code, no issues, no t
   (item count, readiness of each item, dependencies and cycles, AC coverage) and sends you any errors
   to fix.
 
-## Format — write `.agent-work/<id>/breakdown.md`
+## Format — write `breakdown.md` in the work folder given in your prompt
 ```markdown
 # Breakdown of <issue #N | task <id>>: <parent title>
 
