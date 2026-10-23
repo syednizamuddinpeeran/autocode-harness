@@ -13,9 +13,12 @@
 # moved item, YYYY-MM-DDTHH-MM-SSZ, so reuse_folder keeps the order. index.jsonl and batch/ stay put.
 #
 # Safety: every destination is checked before anything moves. If one exists, or a new location is
-# inside the old one, nothing moves and the script exits 1. Moves use mv -n. .agent-work/.layout is
-# written last, after all moves succeed, so a failed run is finished by running again, and a second
-# run on a migrated tree moves nothing.
+# inside the old one, nothing moves and the script exits 1. Moves use mv -n. The layout is recorded
+# last, after all moves succeed, so a failed run is finished by running again, and a second run on a
+# migrated tree moves nothing.
+# Layout record: .agent-work/.layout is written only when DRAFTS_DIR or WORK_DIR is not the default.
+# With both at their defaults no .agent-work/ is created, and a stale .layout from an earlier
+# non-default run is removed, so a default install leaves the tree as it is.
 set -euo pipefail
 shopt -s nullglob
 
@@ -132,10 +135,15 @@ else
 fi
 
 # Record the applied locations last, so a rerun after a failure still sees the old ones.
-mkdir -p "$(dirname "$layout")"
-printf 'DRAFTS_DIR=%s\nWORK_DIR=%s\n' "$DRAFTS_DIR" "$WORK_DIR" > "$layout.tmp"
-if ! cmp -s "$layout.tmp" "$layout" 2>/dev/null; then
-  mv "$layout.tmp" "$layout"
+# Defaults need no record: without .layout the defaults are used, so a default tree gets no new files.
+if [[ "$DRAFTS_DIR" == ".agent-work/drafts" && "$WORK_DIR" == ".agent-work" ]]; then
+  rm -f "$layout"
 else
-  rm -f "$layout.tmp"
+  mkdir -p "$(dirname "$layout")"
+  printf 'DRAFTS_DIR=%s\nWORK_DIR=%s\n' "$DRAFTS_DIR" "$WORK_DIR" > "$layout.tmp"
+  if ! cmp -s "$layout.tmp" "$layout" 2>/dev/null; then
+    mv "$layout.tmp" "$layout"
+  else
+    rm -f "$layout.tmp"
+  fi
 fi
