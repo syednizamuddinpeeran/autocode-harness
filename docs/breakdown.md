@@ -35,7 +35,7 @@ Agents cannot edit `complexity.env` or the check scripts (guard `deny-paths`). C
 `create-issues` validates again, previews every item and asks for confirmation (`--yes` skips the prompt). Using your `gh` credentials, it then:
 - creates the issues in dependency order. Only items with no dependencies get the `agent-ready` label, because that label starts the Claude GitHub Action. Add it to the others when their blockers are merged;
 - adds them to the parent as native [sub-issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues);
-- records native [blocked-by dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies);
+- records native [blocked-by dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies) between the items, and records the parent as blocked by each of its new sub-issues (a warning names any link that could not be recorded; add it by hand). `run-batch` does not read the parent's blockers;
 - comments the plan on the parent.
 
 `--from-pr` only accepts PRs on `copilot/*` or `agent/*` branches. `--from-issue` only reads comments by the `claude` / `github-actions` bots.
