@@ -50,6 +50,8 @@ run_one() {
   local out ps_out
   out="$(bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-angle.md")"; got=$?
   [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-angle.md: want exit 0 and ready, got $got: $out"; return 1; }
+  out="$(LC_ALL=C bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-unicode.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-unicode.md (LC_ALL=C): want exit 0 and ready, got $got: $out"; return 1; }
   out="$(bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/bad-goal-placeholder.md")"; got=$?
   [[ $got -eq 4 && "$(grep -c '^  - ' <<<"$out")" -eq 1 ]] && grep -q 'Goal is empty' <<<"$out" \
     || { echo "check-ready bad-goal-placeholder.md: want exit 4 with only the Goal problem, got $got: $out"; return 1; }

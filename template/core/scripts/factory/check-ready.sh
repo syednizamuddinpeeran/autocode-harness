@@ -17,7 +17,7 @@ file="${1:?usage: check-ready.sh <file.md>}"
 # Section text: lines after "## Name" / "### Name" up to the next heading, without HTML comments,
 # template placeholders (<…>), "_No response_" (empty issue-form field) and blank lines.
 # Mode "goal" is the exception: a Goal may contain <…> words such as "Ship <name> to <env>". Its
-# <…> tokens are removed first, and a line counts only if something alphanumeric is left, so an
+# <…> tokens are removed first, and a line counts only if something non-blank is left, so an
 # unfilled template line like "<describe the user-visible outcome>" is still empty.
 section() {
   awk -v name="$1" '
@@ -25,7 +25,7 @@ section() {
     on { print }
   ' "$file" | sed -E 's/<!--.*-->//g' | {
     if [[ "${2:-}" == goal ]]; then
-      sed -E 's/<[^>]+>//g' | grep -E '[[:alnum:]]' | grep -Ev '^[[:space:]]*_No response_[[:space:]]*$'
+      sed -E 's/<[^>]+>//g' | grep -E '[^[:space:]]' | grep -Ev '^[[:space:]]*_No response_[[:space:]]*$'
     else
       grep -Ev '<[^>]+>|^[[:space:]]*_No response_[[:space:]]*$|^[[:space:]]*$'
     fi
