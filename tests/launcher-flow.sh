@@ -22,6 +22,9 @@ cat > "$bin/copilot" <<'SH'
 # Analyst session (new-draft): write the draft the "human" would end up with.
 if [[ "$1 $2" == "--agent analyst" ]]; then
   [[ -n "${FAKE_DRAFT:-}" ]] && cp "$FAKE_DRAFT" .agent-work/draft.md
+  # Record whether an earlier Q&A file was staged in before this session, then write the new one.
+  if [[ -f .agent-work/questions-and-answers.md ]]; then echo staged >> "$FAKE_LOG.qa"; else echo absent >> "$FAKE_LOG.qa"; fi
+  [[ -n "${FAKE_QA:-}" ]] && cp "$FAKE_QA" .agent-work/questions-and-answers.md
   echo "analyst:$PWD" >> "$FAKE_LOG.analyst"
   exit 0
 fi
@@ -120,21 +123,31 @@ bash scripts/factory/new-draft.sh "add csv export" </dev/null >/dev/null 2>&1; r
 check "local: new-draft needs a terminal" 2 "$rc"
 if command -v script >/dev/null; then
   # Run new-draft in a pseudo-terminal; the fake analyst writes a draft with an OPEN item.
-  out="$(FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv2 "add csv export"' /dev/null 2>&1)"; rc=$?
+  printf '1. Q: Which columns?\n   A: id and name.\n' > "$tmp/qa.md"
+  out="$(FAKE_QA="$tmp/qa.md" FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv2 "add csv export"' /dev/null 2>&1)"; rc=$?
   check "local: new-draft saves the analyst's draft" 0 "$rc"
   d2=(.agent-work/drafts/*Z-csv2)
   [[ "${#d2[@]}" == 1 && "${d2[0]}" =~ ^\.agent-work/drafts/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-csv2$ ]] \
     || { echo "FAIL local: draft folder is not <UTC stamp>-csv2 (got: ${d2[*]})"; fail=1; }
   cmp -s "$fx/bad-open-question.md" "${d2[0]}/draft.md" || { echo "FAIL local: draft not saved as draft.md in the dated folder"; fail=1; }
+  cmp -s "$tmp/qa.md" "${d2[0]}/questions-and-answers.md" || { echo "FAIL local: Q&A not saved as questions-and-answers.md in the draft folder"; fail=1; }
   # A rerun with the same id reuses the folder.
-  FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv2 "add csv export"' /dev/null >/dev/null 2>&1
+  rm -f "$FAKE_LOG.qa"
+  FAKE_QA="$tmp/qa.md" FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv2 "add csv export"' /dev/null >/dev/null 2>&1
   d2=(.agent-work/drafts/*Z-csv2)
   check "local: new-draft rerun reuses the draft folder" 1 "${#d2[@]}"
+  check "local: rerun stages the earlier Q&A for the analyst" staged "$(tail -1 "$FAKE_LOG.qa")"
+  # A session that writes no Q&A file still succeeds and leaves only the draft.
+  FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv4 "add csv export"' /dev/null >/dev/null 2>&1; rc=$?
+  check "local: new-draft without Q&A succeeds" 0 "$rc"
+  d4=(.agent-work/drafts/*Z-csv4)
+  [[ -f "${d4[0]}/draft.md" && ! -e "${d4[0]}/questions-and-answers.md" ]] || { echo "FAIL local: no-Q&A session should leave only draft.md"; fail=1; }
   # Changing DRAFTS_DIR in paths.env moves new drafts.
   sed -i 's|^DRAFTS_DIR=.*|DRAFTS_DIR=elsewhere/drafts|' scripts/factory/paths.env
-  FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv3 "add csv export"' /dev/null >/dev/null 2>&1
+  FAKE_QA="$tmp/qa.md" FAKE_DRAFT="$fx/bad-open-question.md" script -qec 'bash scripts/factory/new-draft.sh --id csv3 "add csv export"' /dev/null >/dev/null 2>&1
   d3=(elsewhere/drafts/*Z-csv3)
   [[ -f "${d3[0]}/draft.md" ]] || { echo "FAIL local: draft not written under the configured DRAFTS_DIR"; fail=1; }
+  cmp -s "$tmp/qa.md" "${d3[0]}/questions-and-answers.md" || { echo "FAIL local: Q&A not saved under the configured DRAFTS_DIR"; fail=1; }
   [[ ! -e .agent-work/drafts/csv3.md && -z "$(ls -d .agent-work/drafts/*csv3* 2>/dev/null)" ]] \
     || { echo "FAIL local: draft still written under .agent-work/drafts after DRAFTS_DIR changed"; fail=1; }
   git checkout -q scripts/factory/paths.env; rm -rf elsewhere
