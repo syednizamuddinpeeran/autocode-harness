@@ -40,7 +40,12 @@ $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
 $tpl = Join-Path $src 'template'
 
-if (-not (Test-Path -LiteralPath (Join-Path $Target '.git'))) { throw "$Target is not a git repository" }
+# A normal checkout (.git is a folder) or a git worktree (.git is a file), but not a folder inside one.
+if (-not ((Test-Path -LiteralPath $Target -PathType Container) -and (Test-Path -LiteralPath (Join-Path $Target '.git')))) {
+  throw "$Target is not a git repository"
+}
+git -C $Target rev-parse --git-dir *> $null
+if ($LASTEXITCODE -ne 0) { throw "$Target is not a git repository" }
 $repoDir = Join-Path $tpl "repo/$Repo"
 if ($Repo.StartsWith('_') -or -not (Test-Path -LiteralPath $repoDir -PathType Container)) {
   throw "Unknown -Repo: $Repo ($((Get-ChildItem (Join-Path $tpl 'repo') -Directory).Name -join ', '))"

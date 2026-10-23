@@ -51,7 +51,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$dst" ]] || usage 1
-[[ -d "$dst/.git" ]] || { echo "$dst is not a git repository" >&2; exit 1; }
+# A normal checkout (.git is a folder) or a git worktree (.git is a file), but not a folder inside one.
+[[ -d "$dst" && -e "$dst/.git" ]] && git -C "$dst" rev-parse --git-dir >/dev/null 2>&1 \
+  || { echo "$dst is not a git repository" >&2; exit 1; }
 
 case "$os" in linux|wsl|windows) ;; *) echo "Unknown --os: $os (linux, wsl, windows)" >&2; exit 1 ;; esac
 [[ -d "$src/template/repo/$repo" && "$repo" != _* ]] || { echo "Unknown --repo: $repo ($(ls "$src/template/repo" | tr '\n' ' '))" >&2; exit 1; }

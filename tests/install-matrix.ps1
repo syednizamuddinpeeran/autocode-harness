@@ -2,6 +2,28 @@
 #   pwsh tests/install-matrix.ps1
 $root = Split-Path -Parent $PSScriptRoot
 $fail = 0
+# A git worktree as the target (its .git is a file, not a directory) installs like a normal checkout;
+# a plain folder is refused.
+Write-Output '=== install into a git worktree'
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("factory-matrix-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path (Join-Path $tmp 'main'), (Join-Path $tmp 'plain') | Out-Null
+Push-Location -LiteralPath (Join-Path $tmp 'main')
+try {
+  git init -q -b main . ; git config user.email t@t ; git config user.name t
+  Set-Content README.md '# scratch'; git add -A; git commit -qm init
+  $wt = Join-Path $tmp 'wt'
+  git worktree add -q -b wt $wt; if ($LASTEXITCODE -ne 0) { throw 'git worktree add failed' }
+  & pwsh -NoProfile -File (Join-Path $root 'install.ps1') $wt -Repo github -Os windows | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'install into a worktree failed' }
+  if (-not (Test-Path -LiteralPath (Join-Path $wt 'scripts/factory/run-issue.ps1'))) { throw 'worktree install wrote no factory scripts' }
+  & pwsh -NoProfile -File (Join-Path $root 'install.ps1') (Join-Path $tmp 'plain') -Repo github *> $null
+  if ($LASTEXITCODE -eq 0) { throw 'install into a plain folder succeeded' }
+} catch {
+  Write-Output "FAILED: install into a git worktree ($_)"; $fail = 1
+} finally {
+  Pop-Location
+  Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
+}
 foreach ($repo in (Get-ChildItem (Join-Path $root 'template/repo') -Directory).Name) {
  foreach ($assistant in (Get-ChildItem (Join-Path $root 'template/assistant') -Directory).Name) {
   Write-Output "=== repo=$repo os=windows assistant=$assistant cloud=aws"

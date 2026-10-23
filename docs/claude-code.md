@@ -28,6 +28,7 @@ Claude Code differs from Copilot in ways that matter for a policy hook ([hooks r
 - **Only exit code 2 blocks.** A hook that exits 1, crashes or prints invalid JSON is a *non-blocking* error and the tool call goes ahead. The guard therefore answers Claude-shaped payloads (`tool_name`/`tool_input`) with `hookSpecificOutput.permissionDecision: "deny"`, the reason on stderr, **and exit 2**, and exits 2 on its own errors.
 - **`onFailure: "block"`** is set on the `PreToolUse` hook, so a guard that cannot start or times out blocks the call instead of allowing it (Claude Code v2.1.295 or later; older versions ignore the field — keep Claude Code up to date).
 - **Hooks load in `-p` mode** even in an untrusted folder, so autonomous runs in a fresh worktree are guarded without extra flags.
+- **Background sub-agents are not cut off.** `claude -p` stops background tasks 10 minutes after the last turn, which would kill an implementer the factory agent is waiting on and end the run with uncommitted edits. `agent-cli.sh` / `.ps1` set `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` for autonomous runs to lift that limit.
 - **`bypassPermissions` skips permission prompts, not hooks or deny rules.** The guard and `permissions.deny` still apply.
 - **Timeouts:** the hooks set their own (10–20 s); Claude Code's default would be 600 s.
 - Tool names covered: `Bash`, `PowerShell` (shell); `Write`, `Edit`, `MultiEdit`, `NotebookEdit` (write); `Read`, `Glob`, `Grep` (read).
