@@ -153,14 +153,19 @@ Check 'd: rerun exit 0' 0 $rd.Rc
 Check 'd: rerun changes nothing' $mA (Get-Manifest $a)
 Check 'd: rerun prints no moves' 0 $((Get-MoveLines $rd.Out).Length)
 
-# (b) a pre-existing destination refuses the whole run
+# (b) a pre-existing destination refuses the whole run before any move.
+# The conflict is on a LATER move (issue work runs after drafts), so the draft move is still free: only the
+# preflight can refuse here. Without the preflight, drafts/alpha.md would move first and the tree would change.
 $b = New-Repo 'b'
-Write-File "$b/.agent-work/drafts/$S1-alpha/draft.md" 'keep'
+Write-File "$b/.agent-work/$S1-issue-7/keep.md" 'keep'
 $mB = Get-Manifest $b
 $rb = Invoke-Migrate $b
 Check 'b: exit non-zero' 'yes' (Yn ($rb.Rc -ne 0))
 Check 'b: tree byte-identical' $mB (Get-Manifest $b)
-Check 'b: existing draft not overwritten' 'keep' (Read-Text "$b/.agent-work/drafts/$S1-alpha/draft.md")
+Check 'b: flat draft still in place' 'alpha' (Read-Text "$b/.agent-work/drafts/alpha.md")
+Check 'b: flat draft not moved' 'no' (Yn (Test-Path -LiteralPath "$b/.agent-work/drafts/$S1-alpha"))
+Check 'b: flat issue work still in place' 'brief' (Read-Text "$b/.agent-work/issue-7/brief.md")
+Check 'b: existing issue work not overwritten' 'keep' (Read-Text "$b/.agent-work/$S1-issue-7/keep.md")
 Check 'b: no layout written' 'no' (Yn (Test-Path -LiteralPath "$b/.agent-work/.layout"))
 
 # (c) changed locations in paths.env move stamped folders from the recorded location
