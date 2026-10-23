@@ -55,15 +55,31 @@ exit 0
 SH
 # Fake gh: `gh issue view N --json …` prints an issue whose body is $FAKE_ISSUE_BODY;
 # `gh issue create …` records its arguments and body, and prints an issue URL.
+# Failures are counted in files: FAKE_GH_CREATE_FAIL / FAKE_GH_CREATE_LOST / FAKE_GH_LINK_FAIL hold a count, and
+# that many calls fail (create: before anything is created; lost: created, but the reply is lost; link: the
+# sub_issues POST). FAKE_GH_ISSUES=<file> keeps the created issues as JSON lines, which `issue list` returns.
 cat > "$bin/gh" <<'SH'
 #!/usr/bin/env bash
+# counted <file>: true, and the file counts down, while the file holds a positive count
+counted() { [[ -f "${1:-/nonexistent}" ]] && (( $(cat "$1") > 0 )) && echo $(( $(cat "$1") - 1 )) > "$1"; }
 if [[ "$1 $2" == "issue view" ]]; then
   jq -n --arg b "$(cat "$FAKE_ISSUE_BODY")" '{number: 7, title: "Add CSV export", body: $b, labels: [], url: "https://example.test/7"}'
 elif [[ "$1 $2" == "issue create" ]]; then
+  if counted "${FAKE_GH_CREATE_FAIL:-}"; then echo 'Post "https://api.github.com/repos/o/r/issues": dial tcp: i/o timeout' >&2; exit 1; fi
   n=$(( $(cat "$FAKE_GH_SEQ" 2>/dev/null || echo 7) + 1 )); echo "$n" > "$FAKE_GH_SEQ"
   printf '%s\n' "$@" > "$FAKE_GH_CREATE"
-  while [[ $# -gt 0 ]]; do [[ "$1" == --body-file ]] && cp "$2" "$FAKE_GH_CREATE.body" && cp "$2" "$FAKE_GH_CREATE.body.$n"; shift; done
+  title=""
+  while [[ $# -gt 0 ]]; do
+    [[ "$1" == --title ]] && title="$2"
+    [[ "$1" == --body-file ]] && cp "$2" "$FAKE_GH_CREATE.body" && cp "$2" "$FAKE_GH_CREATE.body.$n"
+    shift
+  done
+  [[ -z "${FAKE_GH_ISSUES:-}" ]] || jq -cn --argjson n "$n" --arg t "$title" --rawfile b "$FAKE_GH_CREATE.body.$n" \
+    '{number: $n, title: $t, body: $b}' >> "$FAKE_GH_ISSUES"
+  if counted "${FAKE_GH_CREATE_LOST:-}"; then echo 'Post "https://api.github.com/repos/o/r/issues": EOF' >&2; exit 1; fi
   echo "https://example.test/issues/$n"
+elif [[ "$1 $2" == "issue list" ]]; then
+  if [[ -n "${FAKE_GH_ISSUES:-}" && -f "$FAKE_GH_ISSUES" ]]; then jq -s . "$FAKE_GH_ISSUES"; else echo '[]'; fi
 elif [[ "$1 $2" == "issue comment" ]]; then
   printf '%s\n' "$@" > "$FAKE_GH_COMMENT"
 elif [[ "$1 $2" == "pr list" ]]; then
@@ -77,6 +93,8 @@ elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL
   # Simulated network failure: the next <count in $FAKE_GH_API_FAIL> matching api calls fail.
   echo $(( $(cat "$FAKE_GH_API_FAIL") - 1 )) > "$FAKE_GH_API_FAIL"
   echo "Get \"https://api.github.com/$2\": dial tcp: i/o timeout" >&2; exit 1
+elif [[ "$1" == api && "$2" == -X && "$4" == */sub_issues ]] && counted "${FAKE_GH_LINK_FAIL:-}"; then
+  echo 'Post "https://api.github.com/repos/o/r/issues/7/sub_issues": dial tcp: i/o timeout' >&2; exit 1
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
   cat "${FAKE_SUBS:-/dev/null}"   # already in the --jq output form: "<number> <state>" (create-issues: "<number>\t<title>")
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
@@ -486,6 +504,58 @@ grep -q 'Export service' <<<"$out" || { echo "FAIL github: duplicate title not n
 [[ ! -e "$FAKE_GH_CREATE" ]] || { echo "FAIL github: an issue was created despite the duplicate title"; fail=1; }
 check "github: duplicate title creates nothing" "$seq_before" "$(cat "$FAKE_GH_SEQ")"
 echo "$seq_keep" > "$FAKE_GH_SEQ"
+
+# github: every gh call is retried like gh_api (BATCH_GH_RETRIES, BATCH_GH_RETRY_SECONDS); a create is not repeated
+# when its title is already there (under the parent, or as an unlinked "Parent: #7" issue). Breakdown of #7, no sub-issues.
+seq_t2="$(cat "$FAKE_GH_SEQ")"
+gfail="$tmp/gh-create-fail" glost="$tmp/gh-create-lost" glink="$tmp/gh-link-fail" gissues="$tmp/gh-issues.jsonl"
+run_cc() { BATCH_GH_RETRY_SECONDS=0 FAKE_GH_CREATE_FAIL="$gfail" FAKE_GH_CREATE_LOST="$glost" FAKE_GH_LINK_FAIL="$glink" \
+  FAKE_GH_ISSUES="$gissues" bash scripts/factory/create-issues.sh .agent-work/breakdowns/issue-7.md --yes 2>&1; }
+count_issues() { if [[ -f "$gissues" ]]; then jq -s length "$gissues"; else echo 0; fi; }
+reset_gh() { echo 30 > "$FAKE_GH_SEQ"; rm -f "$FAKE_GH_CREATE" "$FAKE_GH_API" "$gissues" "$gfail" "$glost" "$glink"; }
+
+# (a) one transient create failure: retried, each item created once
+reset_gh; echo 1 > "$gfail"
+out="$(run_cc)"; rc=$?
+check "github: a transient create failure is retried (exit 0)" 0 "$rc"
+check "github: transient create failure creates each item once (#31-#33)" 33 "$(cat "$FAKE_GH_SEQ")"
+check "github: transient create failure leaves three issues" 3 "$(count_issues)"
+grep -q "retrying in 0s (1/3): gh issue create" <<<"$out" || { echo "FAIL github: retry not logged"; echo "$out"; fail=1; }
+
+# (b) the create succeeded on the server but its reply was lost: the retry finds the title and does not create again
+reset_gh; echo 1 > "$glost"
+out="$(run_cc)"; rc=$?
+check "github: a create whose reply was lost exits 0" 0 "$rc"
+check "github: a lost-reply create is found again, not repeated (#31-#33)" 33 "$(cat "$FAKE_GH_SEQ")"
+check "github: a lost-reply create leaves each title once" 3 "$(count_issues)"
+
+# (c) retries exhausted: exit 1 and the call is named; nothing created
+reset_gh; echo 99 > "$gfail"
+out="$(run_cc)"; rc=$?
+check "github: exhausted create retries exit 1" 1 "$rc"
+grep -q "giving up: gh issue create" <<<"$out" || { echo "FAIL github: exhausted create does not name the call"; echo "$out"; fail=1; }
+check "github: exhausted create made no issue" 30 "$(cat "$FAKE_GH_SEQ")"
+
+# (d) rerun on the same breakdown once the failure is gone: exit 0, no duplicates
+echo 0 > "$gfail"
+out="$(run_cc)"; rc=$?
+check "github: rerun after exhausted retries exits 0" 0 "$rc"
+check "github: rerun after exhausted retries creates each item once (#31-#33)" 33 "$(cat "$FAKE_GH_SEQ")"
+check "github: rerun after exhausted retries leaves each title once" 3 "$(count_issues)"
+
+# (e) the sub-issue link keeps failing: exit 1 and the call is named; the rerun links the unlinked issue, no duplicate
+reset_gh; echo 99 > "$glink"
+out="$(run_cc)"; rc=$?
+check "github: exhausted link retries exit 1" 1 "$rc"
+grep -q "giving up: gh api -X POST repos/{owner}/{repo}/issues/7/sub_issues" <<<"$out" || { echo "FAIL github: exhausted link does not name the call"; echo "$out"; fail=1; }
+check "github: exhausted link keeps the issue it created" 1 "$(count_issues)"
+echo 0 > "$glink"
+out="$(run_cc)"; rc=$?
+check "github: rerun after a failed link exits 0" 0 "$rc"
+check "github: rerun after a failed link creates the other items only (#31-#33)" 33 "$(cat "$FAKE_GH_SEQ")"
+check "github: rerun after a failed link leaves each title once" 3 "$(count_issues)"
+grep -q "issues/7/sub_issues -F sub_issue_id=1031" "$FAKE_GH_API" || { echo "FAIL github: unlinked issue not linked on rerun"; fail=1; }
+echo "$seq_t2" > "$FAKE_GH_SEQ"
 
 export FAKE_PR_BODY="$bd/ok.md" FAKE_PR_HEAD="feature/x"
 bash scripts/factory/create-issues.sh --from-pr 9 --yes >/dev/null 2>&1; rc=$?
