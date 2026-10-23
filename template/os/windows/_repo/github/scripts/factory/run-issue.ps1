@@ -102,7 +102,7 @@ $rc = $LASTEXITCODE
 
 # Also file the questions or breakdown in the draft folder that recorded this issue (if any). Best effort.
 Push-Location -LiteralPath $root
-try { $draft = [string](Find-Draft $Issue) } finally { Pop-Location }
+try { $draft = [string](Find-Draft $Issue) } catch { $draft = '' } finally { Pop-Location }
 if ($draft) {
   if (-not [System.IO.Path]::IsPathRooted($draft)) { $draft = Join-Path $root $draft }
   foreach ($f in 'questions.md', 'breakdown.md') {
