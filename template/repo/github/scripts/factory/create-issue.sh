@@ -63,6 +63,10 @@ for draft in "${drafts[@]}"; do
     url="$(gh issue create --title "$title" --body-file "$body")"
   fi
   echo "Created: $url"
+  # Record the result beside the draft, but only for a draft.md that new-draft.sh made in its own folder.
+  if [[ "$(basename "$draft")" == "draft.md" ]]; then
+    printf 'number=%s\nurl=%s\n' "${url##*/}" "$url" > "$(dirname "$draft")/created.txt"
+  fi
   [[ -n "$as_draft" ]] || echo "Run it locally with:  scripts/factory/run-issue.sh ${url##*/}   (or assign it to the cloud agent)"
 done
 [[ -z "$as_draft" ]] || echo "Review the issues on GitHub, then add the agent-ready label to the ones you approve."

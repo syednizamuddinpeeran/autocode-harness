@@ -54,6 +54,11 @@ try {
       if ($LASTEXITCODE -ne 0) { throw 'gh issue create failed' }
     }
     Write-Output "Created: $url"
+    # Record the result beside the draft, but only for a draft.md that new-draft made in its own folder.
+    if ((Split-Path -Leaf $d) -eq 'draft.md') {
+      $rec = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $d).Path) 'created.txt'
+      [System.IO.File]::WriteAllText($rec, "number=$(($url -split '/')[-1])`nurl=$url`n")
+    }
     if (-not $Draft) { Write-Output "Run it locally with:  pwsh scripts/factory/run-issue.ps1 $(($url -split '/')[-1])   (or assign it to the cloud agent)" }
   }
 } finally { Remove-Item -LiteralPath $body -Force -ErrorAction SilentlyContinue }
