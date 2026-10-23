@@ -468,6 +468,12 @@ check "github: create-issues survives a rejected parent blocked-by call" 0 "$rc"
 grep -q "could not record parent #7 as blocked by #9" <<<"$out" || { echo "FAIL github: no warning naming parent #7 and #9"; echo "$out"; fail=1; }
 grep -q "Created #11:" <<<"$out" || { echo "FAIL github: creation stopped after a rejected parent blocked-by call"; echo "$out"; fail=1; }
 echo "$seq_before" > "$FAKE_GH_SEQ"
+# github: the PowerShell twin records the same parent blocked-by call and warning (static check; pwsh not needed)
+ps1="$root/template/os/windows/_repo/github/scripts/factory/create-issues.ps1"
+grep -qF 'issues/$Parent/dependencies/blocked_by" -F "issue_id=$($id[[int]$i])"' "$ps1" \
+  || { echo "FAIL windows: create-issues.ps1 does not record the parent as blocked by each sub-issue"; fail=1; }
+grep -qF 'could not record parent #$Parent as blocked by #$($num[[int]$i])' "$ps1" \
+  || { echo "FAIL windows: create-issues.ps1 parent blocked-by warning missing or differs from create-issues.sh"; fail=1; }
 export FAKE_PR_BODY="$bd/ok.md" FAKE_PR_HEAD="feature/x"
 bash scripts/factory/create-issues.sh --from-pr 9 --yes >/dev/null 2>&1; rc=$?
 check "github: create-issues --from-pr refuses a non-agent branch" 1 "$rc"

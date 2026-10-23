@@ -94,6 +94,8 @@ try {
     $id[[int]$i] = gh api "repos/{owner}/{repo}/issues/$($num[[int]$i])" --jq .id
     gh api -X POST "repos/{owner}/{repo}/issues/$Parent/sub_issues" -F "sub_issue_id=$($id[[int]$i])" | Out-Null
     if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("  (could not add #$($num[[int]$i]) as a sub-issue of #$Parent; link it by hand)") }
+    gh api -X POST "repos/{owner}/{repo}/issues/$Parent/dependencies/blocked_by" -F "issue_id=$($id[[int]$i])" | Out-Null
+    if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("  (could not record parent #$Parent as blocked by #$($num[[int]$i]); link it by hand)") }
     $deps = ''
     foreach ($d in @(Get-Content -LiteralPath (Join-Path $items "$i.deps") | Where-Object { $_ })) {
       $deps += " #$($num[[int]$d])"
