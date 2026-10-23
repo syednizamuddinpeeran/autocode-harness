@@ -26,5 +26,17 @@ while IFS= read -r f; do
     echo "body differs: $f vs $other"; diff <(body "$f") <(body "$other") | head -10; fail=1
   fi
 done < <(find copilot -type f \( -name '*.agent.md' -o -name SKILL.md \) | sort)
+# The repo-layer issue and task skills write into the work folder named by the prompt's
+# `Work folder: <path>` line. They must not name a literal work path (.agent-work/issue-N/ or
+# .agent-work/<id>/), and must stop with an error when that line is missing.
+work=0
+while IFS= read -r f; do
+  work=$((work + 1))
+  if grep -Eq '\.agent-work/(issue-|<)' "$f"; then echo "literal work path in $f (use the work folder from the prompt)"; fail=1; fi
+  for phrase in 'Work folder:' 'stop with an error'; do
+    grep -Fq "$phrase" "$f" || { echo "missing '$phrase' in $f"; fail=1; }
+  done
+done < <(find . -type f -path '*/_repo/*/*/skills/*/SKILL.md' \( -path '*/issue-intake/SKILL.md' -o -path '*/open-pr/SKILL.md' -o -path '*/task-intake/SKILL.md' -o -path '*/handoff/SKILL.md' \) | sort)
+[[ $work -eq 8 ]] || { echo "expected 8 repo-layer skill files, found $work"; fail=1; }
 echo "assistant sync: $checked files checked, $([[ $fail -eq 0 ]] && echo ok || echo FAILED)"
 exit $fail

@@ -5,15 +5,20 @@ description: Push the branch and open or update the pull request with the standa
 
 # Open the pull request
 
+## Work folder
+Read the files this skill uses (`questions.md`, `breakdown.md`, `pr-body.md`) from, and write them to, the
+work folder named by the `Work folder: <path>` line in your prompt. If the prompt has no such line,
+stop with an error and do nothing; never fall back to a literal path.
+
 ## NEEDS-INPUT mode (intake wrote `questions.md`)
 Nothing was planned or changed, so there is nothing to push.
-- **Local CLI**: stop. Do not push or open a PR. `run-issue.sh` shows `.agent-work/issue-N/questions.md`
+- **Local CLI**: stop. Do not push or open a PR. `run-issue.sh` shows `questions.md` from the work folder
   to the human and offers to post it on the issue.
 - **Cloud agent**: do not commit code. Put the contents of `questions.md` in your final message (the PR
   description of your draft PR), titled `Questions: <issue title>`, and stop.
 
 ## BREAKDOWN mode (the work exceeded the complexity limits)
-Nothing was implemented. The deliverable is `.agent-work/issue-N/breakdown.md`.
+Nothing was implemented. The deliverable is `breakdown.md` in the work folder.
 - **Local CLI**: stop. Do not push or open a PR. `run-issue.sh` shows the breakdown and tells the human
   how to create the sub-issues (`create-issues.sh`).
 - **Cloud agent**: do not commit code. Put the contents of `breakdown.md` in your final message (the PR
@@ -31,11 +36,11 @@ Nothing was implemented. The deliverable is `.agent-work/issue-N/breakdown.md`.
   ```bash
   git push -u origin HEAD
   gh pr create --base "${BASE_BRANCH:-main}" --title "<type>(<scope>): <summary> (#N)" \
-    --body-file .agent-work/issue-N/pr-body.md [--draft]
+    --body-file <work folder>/pr-body.md [--draft]
   ```
   Use `--draft` when risk is high, verification failed, or blocking questions remain.
 
-## PR body (write to `.agent-work/issue-N/pr-body.md`)
+## PR body (write to `pr-body.md` in the work folder)
 ```markdown
 Closes #N
 
@@ -56,7 +61,7 @@ Closes #N
 - ...
 
 ## Agent run
-Plan, review, and decisions: `.agent-work/issue-N/` (local only). Action log: `.agent-logs/<UTC-timestamp>-<session>/<session>.jsonl`.
+Plan, review, and decisions: the work folder (local only). Action log: `.agent-logs/<UTC-timestamp>-<session>/<session>.jsonl`.
 ```
 
 ## Rules
