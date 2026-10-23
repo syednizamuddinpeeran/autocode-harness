@@ -75,6 +75,9 @@ agent_cli() {
           ${CLAUDE_EXTRA_FLAGS:-} "$prompt" --disallowedTools "${flags[@]}"
         return
       fi
+      # claude -p stops background tasks 10 minutes after the last turn, which would kill sub-agents
+      # the factory agent is waiting on and end the run with uncommitted work. 0 lifts that limit.
+      export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
       # shellcheck disable=SC2086  # CLAUDE_EXTRA_FLAGS is a list of flags
       claude --agent factory --permission-mode bypassPermissions --disallowedTools "${flags[@]}" \
         ${CLAUDE_EXTRA_FLAGS:-} -p "$prompt"

@@ -113,7 +113,27 @@ keep_harness_one() {
   bash scripts/factory/check.sh >/dev/null || { echo "check.sh failed on the repo's own hook helpers"; return 1; }
 }
 
+# A git worktree as the target (its .git is a file, not a directory) installs like a normal checkout.
+worktree_one() {
+  local tmp="$1"
+  mkdir -p "$tmp/main" && cd "$tmp/main" || return 1
+  git init -q -b main . && git config user.email t@t && git config user.name t || return 1
+  echo "# scratch" > README.md && git add -A && git commit -qm init || return 1
+  git worktree add -q -b wt "$tmp/wt" || return 1
+  [[ -f "$tmp/wt/.git" ]] || { echo "test setup: worktree .git is not a file"; return 1; }
+  bash "$root/install.sh" "$tmp/wt" --repo github >/dev/null || { echo "install into a worktree failed"; return 1; }
+  [[ -f "$tmp/wt/scripts/factory/run-issue.sh" ]] || { echo "worktree install wrote no factory scripts"; return 1; }
+  bash "$root/install.sh" "$tmp/nope" --repo github >/dev/null 2>&1 && { echo "install into a non-repo succeeded"; return 1; }
+  mkdir -p "$tmp/plain"
+  bash "$root/install.sh" "$tmp/plain" --repo github >/dev/null 2>&1 && { echo "install into a plain folder succeeded"; return 1; }
+  return 0
+}
+
 fail=0
+echo "=== install into a git worktree"
+tmp="$(mktemp -d)"
+( worktree_one "$tmp" ) || { echo "FAILED: install into a git worktree"; fail=1; }
+rm -rf "$tmp"
 for os in linux windows; do
   echo "=== keep-harness os=$os"
   tmp="$(mktemp -d)"

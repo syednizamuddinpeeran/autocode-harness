@@ -4,6 +4,10 @@
 #   - ready, agent writes questions.md → exit 5 and the questions are shown
 #   - ready, agent finishes → exit 0
 #   - github: agent commits but opens no PR → exit 7 (with an open PR → exit 0)
+#   - github: agent ends with nothing (no commits, PR, questions or breakdown) → exit 8
+#   - github: a leftover agent/issue-N branch without a worktree is reused (kept when it has commits)
+#   - github: run-batch retries a failing GitHub API call
+#   - claude-code: the autonomous run lifts the background-task time limit
 #   - local: an edited task restarts a worktree that has no commits yet
 #   - agent proposes a breakdown → exit 6, saved; create-tasks / create-issues create the sub-items
 set -uo pipefail
@@ -61,6 +65,11 @@ elif [[ "$1 $2" == "pr list" ]]; then
   [[ -n "${FAKE_PR_OPEN:-}" ]] && echo 1 || echo 0
 elif [[ "$1 $2" == "pr view" ]]; then
   jq -n --arg b "$(cat "$FAKE_PR_BODY")" --arg h "$FAKE_PR_HEAD" '{body: $b, headRefName: $h, author: {login: "Copilot"}, url: "https://example.test/pull/9"}'
+elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL_ON:-}* \
+        && "$(cat "$FAKE_GH_API_FAIL" 2>/dev/null || echo 0)" -gt 0 ]]; then
+  # Simulated network failure: the next <count in $FAKE_GH_API_FAIL> matching api calls fail.
+  echo $(( $(cat "$FAKE_GH_API_FAIL") - 1 )) > "$FAKE_GH_API_FAIL"
+  echo "Get \"https://api.github.com/$2\": dial tcp: i/o timeout" >&2; exit 1
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
   cat "$FAKE_SUBS"          # already in the --jq output form: "<number> <state>"
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
@@ -71,6 +80,11 @@ elif [[ "$1" == api ]]; then
   [[ "$2" != -X ]] && echo $(( 1000 + ${2##*/} ))
 fi
 exit 0
+SH
+# Fake Claude Code CLI: records whether the background-task time limit was lifted, and its arguments.
+cat > "$bin/claude" <<'SH'
+#!/usr/bin/env bash
+echo "bg=${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset} $*" >> "$FAKE_LOG.claude"
 SH
 chmod +x "$bin"/*
 export PATH="$bin:$PATH" FAKE_LOG="$tmp/agent.log" FAKE_GH_CREATE="$tmp/gh-create.args"
@@ -227,13 +241,26 @@ check "github: not-ready issue exits 4" 4 "$rc"
 check "github: agent not started for not-ready issue" 0 "$(runs)"
 grep -q "issue #7" <<<"$out" || { echo "FAIL github: reason does not name the issue"; fail=1; }
 
+# claude-code: an autonomous run must not let `claude -p` stop background sub-agents after 10 minutes.
+( unset CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS; export ASSISTANT=claude-code
+  # shellcheck disable=SC1091
+  source scripts/factory/agent-cli.sh; agent_cli auto "do the work" "denied-cmd" ) >/dev/null 2>&1
+grep -q '^bg=0 .*-p do the work$' "$FAKE_LOG.claude" \
+  || { echo "FAIL claude-code: autonomous run does not set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0"; cat "$FAKE_LOG.claude" 2>/dev/null; fail=1; }
+
 export FAKE_ISSUE_BODY="$fx/ok-issue-form.md"
+# A branch left over from an earlier run (its worktree removed) without commits is reused.
+git branch agent/issue-7-add-csv-export main
 out="$(FAKE_AGENT=questions bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
 check "github: agent questions exit 5" 5 "$rc"
+check "github: leftover branch without commits reused" "agent/issue-7-add-csv-export" \
+  "$(git -C "$tmp/gh-worktrees/issue-7" branch --show-current 2>/dev/null)"
 grep -q "Which columns are exported" <<<"$out" || { echo "FAIL github: questions not shown"; fail=1; }
 
+# The agent ended without a result: no commits, no PR, no questions, no breakdown → exit 8, "needs you".
 out="$(bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
-check "github: ready issue runs" 0 "$rc"
+check "github: run with no result exits 8" 8 "$rc"
+grep -q "produced no result" <<<"$out" || { echo "FAIL github: empty run not reported"; echo "$out"; fail=1; }
 [[ ! -e "$tmp/gh-worktrees/issue-7/.agent-work/issue-7/questions.md" ]] || { echo "FAIL github: stale questions.md kept"; fail=1; }
 
 # github: the agent committed but opened no PR (e.g. its push was blocked) → exit 7, "needs you"
@@ -243,6 +270,14 @@ grep -q "committed but not pushed" <<<"$out" || { echo "FAIL github: unpushed wo
 grep -qx "agent/issue-7-add-csv-export" "$FAKE_GH_PR_LIST" || { echo "FAIL github: PR not looked up for the issue branch"; fail=1; }
 out="$(FAKE_PR_OPEN=1 bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
 check "github: committed with an open PR exits 0" 0 "$rc"
+# A leftover branch WITH commits and no worktree is kept, never reset: the new worktree is attached to it.
+git worktree remove --force "$tmp/gh-worktrees/issue-7"
+out="$(FAKE_PR_OPEN=1 bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
+check "github: leftover branch with commits reused" 0 "$rc"
+check "github: leftover branch keeps its commits" 1 "$(git rev-list --count main..agent/issue-7-add-csv-export)"
+check "github: worktree attached to the leftover branch" "agent/issue-7-add-csv-export" \
+  "$(git -C "$tmp/gh-worktrees/issue-7" branch --show-current 2>/dev/null)"
+grep -q "keeping its 1 commit" <<<"$out" || { echo "FAIL github: reuse of a branch with commits not reported"; echo "$out"; fail=1; }
 
 # github: drafts → issue (human-only script)
 bash scripts/factory/create-issue.sh "$fx/bad-no-ac.md" --yes >/dev/null 2>&1; rc=$?
@@ -309,9 +344,26 @@ export FAKE_SUBS="$tmp/subs" FAKE_BLOCKED="$tmp/blocked" FAKE_ISSUE_BODY="$fx/ok
 printf '9 open\n10 open\n11 open\n' > "$FAKE_SUBS"; echo "#9" > "$FAKE_BLOCKED.10"; printf '#9\n#10\n' > "$FAKE_BLOCKED.11"
 out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
 grep -qE "#9 +ready" <<<"$out" && grep -qE "#11 +blocked by: #9 #10" <<<"$out" || { echo "FAIL github: run-batch --list states wrong"; echo "$out"; fail=1; }
+# A failing GitHub API call is retried; one that succeeds on retry keeps the batch going.
+export BATCH_GH_RETRY_SECONDS=0
+echo 2 > "$tmp/gh-fail"
+out="$(FAKE_GH_API_FAIL="$tmp/gh-fail" bash scripts/factory/run-batch.sh 7 --list 2>&1)"; rc=$?
+check "github: run-batch retries a failing sub_issues call" 0 "$rc"
+grep -qE "#11 +blocked by: #9 #10" <<<"$out" || { echo "FAIL github: run-batch after a retry shows wrong states"; echo "$out"; fail=1; }
+echo 3 > "$tmp/gh-fail"
+out="$(FAKE_GH_API_FAIL="$tmp/gh-fail" FAKE_GH_API_FAIL_ON=blocked_by bash scripts/factory/run-batch.sh 7 --list 2>&1)"; rc=$?
+check "github: run-batch retries a blocked_by call up to 3 times" 0 "$rc"
+grep -qE "#11 +blocked by: #9 #10" <<<"$out" || { echo "FAIL github: run-batch after 3 retries shows wrong states"; echo "$out"; fail=1; }
+echo 99 > "$tmp/gh-fail"
+out="$(FAKE_GH_API_FAIL="$tmp/gh-fail" FAKE_GH_API_FAIL_ON=blocked_by bash scripts/factory/run-batch.sh 7 --list 2>&1)"; rc=$?
+check "github: run-batch gives up after 3 retries" 1 "$rc"
+grep -q "GitHub API call failed" <<<"$out" || { echo "FAIL github: run-batch give-up not reported"; echo "$out"; fail=1; }
+check "github: run-batch tried 4 times before giving up" 95 "$(cat "$tmp/gh-fail")"
+# Sub-issue 9's agent ends without a result (exit 8): the batch shows it as needing you.
 out="$(bash scripts/factory/run-batch.sh 7 2>&1)"; rc=$?
-check "github: run-batch runs the unblocked sub-issue" 0 "$rc"
+check "github: run-batch reports a run without a result" 1 "$rc"
 grep -q "start    #9" <<<"$out" && ! grep -q "start    #10" <<<"$out" || { echo "FAIL github: run-batch started the wrong sub-issues"; echo "$out"; fail=1; }
+grep -qE "#9 +needs you" <<<"$out" || { echo "FAIL github: run without a result not shown as needing you"; echo "$out"; fail=1; }
 [[ -d "$tmp/gh-worktrees/issue-9" ]] || { echo "FAIL github: sub-issue 9 did not get its own worktree"; fail=1; }
 # A later batch: a worktree without commits is a stopped run (questions, breakdown), not one awaiting
 # review, so --auto-continue must not wait for its PR; a worktree with commits is awaiting review.

@@ -18,8 +18,11 @@
 # closed or nothing more can start without you. Merging stays a human step.
 # Cloud agent instead: run with --list and assign the "ready" ones to Copilot.
 #
-# Exit codes: 0 every run it started finished, 1 a run failed or stopped (questions, breakdown),
-# 2 no sub-issues found.
+# A GitHub API call that fails is retried up to BATCH_GH_RETRIES times (default 3), BATCH_GH_RETRY_SECONDS
+# apart (default 5), before the batch gives up.
+#
+# Exit codes: 0 every run it started finished, 1 a run failed or stopped (questions, breakdown, no
+# result) or a GitHub API call kept failing, 2 no sub-issues found.
 set -euo pipefail
 
 parent="" auto="" list="" parallel=""
@@ -50,18 +53,36 @@ wt_root="${FACTORY_WORKTREE_ROOT:-$(dirname "$root")/$(basename "$root")-worktre
 
 declare -A pid=() rc=() st=() blockers=()
 subs=()
+# gh api with retries: a failed call (e.g. a network timeout) is tried again up to BATCH_GH_RETRIES
+# times (default 3), BATCH_GH_RETRY_SECONDS apart (default 5), before the batch gives up (exit 1).
+gh_api() {
+  local out i tries="${BATCH_GH_RETRIES:-3}"
+  for (( i = 0; ; i++ )); do
+    if out="$(gh api "$@")"; then
+      [[ -z "$out" ]] || printf '%s\n' "$out"
+      return 0
+    fi
+    if (( i >= tries )); then
+      echo "GitHub API call failed $((i + 1)) times, giving up: gh api $1" >&2
+      exit 1
+    fi
+    echo "GitHub API call failed, retrying in ${BATCH_GH_RETRY_SECONDS:-5}s ($((i + 1))/$tries): gh api $1" >&2
+    sleep "${BATCH_GH_RETRY_SECONDS:-5}"
+  done
+}
 # Refresh sub-issue states and open blockers from GitHub.
 refresh() {
-  local n s
+  local n s rows
   subs=(); st=(); blockers=()
+  rows="$(gh_api "repos/{owner}/{repo}/issues/$parent/sub_issues" --paginate --jq '.[] | "\(.number) \(.state)"')"
   while read -r n s; do
     [[ -n "$n" ]] || continue
     subs+=("$n"); st[$n]="$s"
     if [[ "$s" == open ]]; then
-      blockers[$n]="$(gh api "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --paginate \
+      blockers[$n]="$(gh_api "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --paginate \
         --jq '.[] | select(.state == "open") | "#\(.number)"' | tr '\n' ' ')"
     fi
-  done < <(gh api "repos/{owner}/{repo}/issues/$parent/sub_issues" --paginate --jq '.[] | "\(.number) \(.state)"')
+  done <<<"$rows"
 }
 # State of one sub-issue: closed | running | stopped | review | blocked | ready
 state() {

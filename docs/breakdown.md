@@ -68,7 +68,8 @@ scripts/factory/run-batch.sh <parent> --auto-continue   # …and keep starting i
 - With `--auto-continue`, it checks every `BATCH_POLL_SECONDS` (default 60) for your merges and starts the items they unblock. It stops when every item is merged, or when nothing can move without you: an item stopped with questions, a breakdown or a failure.
 - Merging is never automatic. On GitHub each item is a normal PR; locally you run `accept.sh <parent>.<n>` (which also checks the size).
 - An item that already has a branch or worktree is not started again. Delete it to retry, or run `run-issue.sh` / `run-task.sh` for that item yourself. A later batch shows such an item as `review` if its branch has commits, and as `needs you` if it has none (the earlier run stopped), so `--auto-continue` does not wait for a PR that will never come.
-- Exit codes: 0 every run it started finished, 1 a run failed or stopped, 2 no items found.
+- GitHub: a GitHub API call that fails (e.g. a network timeout) is retried up to `BATCH_GH_RETRIES` times (default 3), `BATCH_GH_RETRY_SECONDS` apart (default 5), before the batch gives up.
+- Exit codes: 0 every run it started finished, 1 a run failed or stopped (questions, breakdown, unpushed work, no result) or a GitHub API call kept failing, 2 no items found.
 - Agents are denied `run-batch` (it starts more agents).
 
 **Cloud agent:** run `run-batch.sh <parent> --list` and assign the `ready` sub-issues to Copilot, or add the `agent-ready` label to start the Claude action on them. When their PRs are merged, run `--list` again.

@@ -68,6 +68,9 @@ function Invoke-AgentCli([string]$Assistant, [string]$Prompt, [string[]]$Deny, [
         # The session stays open until /exit. The prompt must precede --disallowedTools, which would swallow it.
         & claude --agent factory --permission-mode bypassPermissions --remote-control factory @extra $Prompt --disallowedTools @flags
       } else {
+        # claude -p stops background tasks 10 minutes after the last turn, which would kill sub-agents
+        # the factory agent is waiting on and end the run with uncommitted work. 0 lifts that limit.
+        $env:CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = '0'
         & claude --agent factory --permission-mode bypassPermissions --disallowedTools @flags @extra -p $Prompt
       }
     }

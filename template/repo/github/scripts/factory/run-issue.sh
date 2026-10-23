@@ -12,7 +12,8 @@
 # script shows it and how to create the sub-issues (create-issues.sh).
 #
 # Exit codes: 0 done, 2 no issue given, 4 issue not ready, 5 agent needs answers, 6 breakdown proposed,
-# 7 work committed but not pushed (no open PR for the branch), other = CLI error.
+# 7 work committed but not pushed (no open PR for the branch), 8 the run produced no result (no commits,
+# no open PR, no questions, no breakdown), other = CLI error.
 # Safety layers: separate worktree + agent/* branch, the CLI's sandbox (enable once with
 # /sandbox), CLI tool denies (agent-cli.sh), preToolUse guard hook, branch protection on GitHub.
 set -euo pipefail
@@ -64,6 +65,19 @@ wt="${FACTORY_WORKTREE_ROOT:-$(dirname "$root")/${repo_name}-worktrees}/issue-${
 git fetch origin "$base" --quiet
 if [[ -d "$wt" ]]; then
   echo "Reusing worktree $wt"
+elif git show-ref --verify --quiet "refs/heads/$branch"; then
+  # The branch is left over from an earlier run whose worktree was removed.
+  git worktree prune
+  kept="$(git rev-list --count "origin/$base..$branch")"
+  if [[ "$kept" -eq 0 ]]; then
+    echo "Reusing branch $branch (no commits of its own): restarting it from origin/$base"
+    git worktree add -B "$branch" "$wt" "origin/$base"
+  else
+    # Never reset a branch that has work on it: attach the new worktree to it as it is.
+    echo "Reusing branch $branch, keeping its $kept commit(s). To start over instead, delete it first:"
+    echo "  git branch -D $branch"
+    git worktree add "$wt" "$branch"
+  fi
 else
   git worktree add -b "$branch" "$wt" "origin/$base"
 fi
@@ -129,6 +143,18 @@ if [[ "$ahead" -gt 0 ]]; then
     echo "   run again to let the agent finish."
     [[ "$rc" -ne 0 ]] && exit "$rc"
     exit 7
+  fi
+else
+  # Nothing came out of the run: no commits, no questions, no breakdown and no open PR. The agent
+  # stopped early or was cut off, so a person has to look.
+  open_prs="$(gh pr list --head "$cur_branch" --state open --json number --jq length 2>/dev/null || true)"
+  if [[ ! "$open_prs" =~ ^[1-9][0-9]*$ ]]; then
+    echo
+    echo "── Issue #$issue: the run produced no result: no commits on $cur_branch, no open pull request, no"
+    echo "   questions and no breakdown. Edits left uncommitted, if any, are in the worktree $wt."
+    echo "   Check the run's output for why the agent stopped, then run again."
+    [[ "$rc" -ne 0 ]] && exit "$rc"
+    exit 8
   fi
 fi
 exit "$rc"

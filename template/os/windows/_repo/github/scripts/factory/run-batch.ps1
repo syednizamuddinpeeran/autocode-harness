@@ -10,7 +10,10 @@
 # own run-issue.ps1 in its own worktree; output goes to .agent-logs/batch/issue-<N>.log.
 # -AutoContinue waits for the merges (every BATCH_POLL_SECONDS, default 60) and starts what they
 # unblock. Merging stays a human step. Cloud agent instead: -List, then assign the ready ones.
-# Exit codes: 0 every run it started finished, 1 a run failed or stopped, 2 no sub-issues found.
+# A GitHub API call that fails is retried up to BATCH_GH_RETRIES times (default 3), BATCH_GH_RETRY_SECONDS
+# apart (default 5), before the batch gives up.
+# Exit codes: 0 every run it started finished, 1 a run failed or stopped (questions, breakdown, no
+# result) or a GitHub API call kept failing, 2 no sub-issues found.
 param([Parameter(Position = 0)][int]$Parent, [switch]$AutoContinue, [switch]$List, [int]$Parallel)
 $ErrorActionPreference = 'Stop'
 if (-not $Parent) { [Console]::Error.WriteLine('usage: run-batch.ps1 <parent-issue> [-AutoContinue] [-List] [-Parallel <n>]'); exit 2 }
@@ -28,15 +31,31 @@ $stagger = if ($null -ne $env:BATCH_STAGGER_SECONDS) { [int]$env:BATCH_STAGGER_S
 $logs = Join-Path $root '.agent-logs/batch'; New-Item -ItemType Directory -Force -Path $logs | Out-Null
 $wtRoot = if ($env:FACTORY_WORKTREE_ROOT) { $env:FACTORY_WORKTREE_ROOT } else { Join-Path (Split-Path -Parent $root) "$(Split-Path -Leaf $root)-worktrees" }
 
+$ghRetries = if ($env:BATCH_GH_RETRIES) { [int]$env:BATCH_GH_RETRIES } else { 3 }
+$ghPause = if ($null -ne $env:BATCH_GH_RETRY_SECONDS) { [int]$env:BATCH_GH_RETRY_SECONDS } else { 5 }
+# gh api with retries: a failed call (e.g. a network timeout) is tried again up to BATCH_GH_RETRIES
+# times (default 3), BATCH_GH_RETRY_SECONDS apart (default 5), before the batch gives up (exit 1).
+function Invoke-GhApi {
+  for ($i = 0; ; $i++) {
+    $out = @(gh api @args)
+    if ($LASTEXITCODE -eq 0) { return $out }
+    if ($i -ge $ghRetries) {
+      [Console]::Error.WriteLine("GitHub API call failed $($i + 1) times, giving up: gh api $($args[0])")
+      exit 1
+    }
+    [Console]::Error.WriteLine("GitHub API call failed, retrying in ${ghPause}s ($($i + 1)/$ghRetries): gh api $($args[0])")
+    Start-Sleep -Seconds $ghPause
+  }
+}
 $subs = @(); $st = @{}; $blockers = @{}
 function Update-Issues {
   $script:subs = @(); $script:st = @{}; $script:blockers = @{}
-  foreach ($row in @(gh api "repos/{owner}/{repo}/issues/$Parent/sub_issues" --paginate --jq '.[] | "\(.number) \(.state)"')) {
+  foreach ($row in @(Invoke-GhApi "repos/{owner}/{repo}/issues/$Parent/sub_issues" --paginate --jq '.[] | "\(.number) \(.state)"')) {
     if (-not $row) { continue }
     $n, $s = $row -split ' ', 2
     $script:subs += $n; $script:st[$n] = $s
     if ($s -eq 'open') {
-      $script:blockers[$n] = (@(gh api "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --paginate --jq '.[] | select(.state == "open") | "#\(.number)"') -join ' ')
+      $script:blockers[$n] = (@(Invoke-GhApi "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --paginate --jq '.[] | select(.state == "open") | "#\(.number)"') -join ' ')
     }
   }
 }
