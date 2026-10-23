@@ -33,15 +33,16 @@ if [[ "$1 $2" == "--agent analyst" ]]; then
   exit 0
 fi
 echo ran >> "$FAKE_LOG"
+# The work folder is named in the prompt ("Work folder: <path>"); fall back to the first folder under .agent-work.
+d="$(sed -n 's/^Work folder: \([^ ]*\).*/\1/p' <<<"$*" | head -1)"
+[[ -n "$d" ]] && d="${d%/}/" || d="$(ls -d .agent-work/*/ | head -1)"
 if [[ "${FAKE_AGENT:-}" == questions ]]; then
-  d="$(ls -d .agent-work/*/ | head -1)"
   printf '1. Which columns are exported? — Why it matters: changes the CSV header.\n' > "${d}questions.md"
 fi
 if [[ "${FAKE_AGENT:-}" == commit ]]; then
   echo "$PWD" > "work-$(basename "$PWD").txt" && git add work-*.txt && git commit -qm "feat: fake work"
 fi
 if [[ "${FAKE_AGENT:-}" == breakdown ]]; then
-  d="$(ls -d .agent-work/*/ | head -1)"
   cp "$FAKE_BREAKDOWN" "${d}breakdown.md"; cp "$FAKE_BRIEF" "${d}brief.md"
 fi
 exit 0
@@ -123,6 +124,21 @@ out="$(bash scripts/factory/run-task.sh t1 2>&1)"; rc=$?
 check "local: answered task runs" 0 "$rc"
 grep -q "recreating the worktree" <<<"$out" || { echo "FAIL local: worktree not refreshed after task edit"; fail=1; }
 grep -q "visible report table" "$tmp/local-worktrees/t1/tasks/t1.md" || { echo "FAIL local: worktree has the old task"; fail=1; }
+
+# local: the work folder is <UTC stamp>-t1 under WORK_DIR, reused on rerun, and follows a changed WORK_DIR
+wtd="$tmp/local-worktrees/t1"
+w1=("$wtd"/.agent-work/*Z-t1)
+[[ "${#w1[@]}" == 1 && "${w1[0]##*/}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-t1$ ]] \
+  || { echo "FAIL local: run-task work folder is not <UTC stamp>-t1 (got: ${w1[*]})"; fail=1; }
+bash scripts/factory/run-task.sh t1 >/dev/null 2>&1
+w2=("$wtd"/.agent-work/*Z-t1)
+[[ "${#w2[@]}" == 1 && "${w2[0]}" == "${w1[0]}" ]] || { echo "FAIL local: rerun did not reuse the work folder (got: ${w2[*]})"; fail=1; }
+sed -i 's|^WORK_DIR=.*|WORK_DIR=.moved-work|' "$wtd/scripts/factory/paths.env"
+bash scripts/factory/run-task.sh t1 >/dev/null 2>&1
+w3=("$wtd"/.moved-work/*Z-t1)
+[[ "${#w3[@]}" == 1 && -d "${w3[0]}" ]] || { echo "FAIL local: changed WORK_DIR did not move a new run's work folder (got: ${w3[*]})"; fail=1; }
+w4=("$wtd"/.agent-work/*Z-t1)
+[[ "${#w4[@]}" == 1 ]] || { echo "FAIL local: run after WORK_DIR change wrote under the old location"; fail=1; }
 
 # local: drafts → tasks (human-only script)
 bash scripts/factory/create-task.sh "$fx/bad-open-question.md" --id t2 --yes >/dev/null 2>&1; rc=$?
