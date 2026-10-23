@@ -84,6 +84,7 @@ elif [[ "$1" == api && -n "${FAKE_GH_POST_FAIL:-}" && "$*" == *"-X POST"* && "$*
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
   cat "$FAKE_SUBS"          # already in the --jq output form: "<number> <state>"
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
+  [[ -n "${FAKE_GH_BLOCKED_READS:-}" ]] && echo "$2" >> "$FAKE_GH_BLOCKED_READS"   # GET paths read by run-batch
   n="${2%/dependencies/blocked_by}"; cat "$FAKE_BLOCKED.${n##*/}" 2>/dev/null || true   # "#<number>" of open blockers
 elif [[ "$1" == api ]]; then
   echo "${*:2}" >> "$FAKE_GH_API"
@@ -482,9 +483,20 @@ check "github: create-issues refuses an invalid breakdown" 4 "$rc"
 
 # github: run the sub-issues whose blockers are closed (run-batch)
 export FAKE_SUBS="$tmp/subs" FAKE_BLOCKED="$tmp/blocked" FAKE_ISSUE_BODY="$fx/ok-issue-form.md"
+export FAKE_GH_BLOCKED_READS="$tmp/gh-blocked-reads"
 printf '9 open\n10 open\n11 open\n' > "$FAKE_SUBS"; echo "#9" > "$FAKE_BLOCKED.10"; printf '#9\n#10\n' > "$FAKE_BLOCKED.11"
+rm -f "$FAKE_GH_BLOCKED_READS"
 out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
 grep -qE "#9 +ready" <<<"$out" && grep -qE "#11 +blocked by: #9 #10" <<<"$out" || { echo "FAIL github: run-batch --list states wrong"; echo "$out"; fail=1; }
+# AC5: run-batch reads each sub-issue's blockers and never the parent's; the --list lines are unchanged.
+grep -qE "#10 +blocked by: #9 *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #10 changed"; echo "$out"; fail=1; }
+grep -qE "#9 +ready *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #9 changed"; echo "$out"; fail=1; }
+grep -qE "#11 +blocked by: #9 #10 *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #11 changed"; echo "$out"; fail=1; }
+for want in issues/9/dependencies/blocked_by issues/10/dependencies/blocked_by issues/11/dependencies/blocked_by; do
+  grep -qF "$want" "$FAKE_GH_BLOCKED_READS" 2>/dev/null || { echo "FAIL github: run-batch did not read $want"; fail=1; }
+done
+! grep -qE "issues/7/dependencies/blocked_by" "$FAKE_GH_BLOCKED_READS" 2>/dev/null \
+  || { echo "FAIL github: run-batch read the parent's blockers (issues/7/dependencies/blocked_by)"; fail=1; }
 # A failing GitHub API call is retried; one that succeeds on retry keeps the batch going.
 export BATCH_GH_RETRY_SECONDS=0
 echo 2 > "$tmp/gh-fail"
