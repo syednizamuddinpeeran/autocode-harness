@@ -14,6 +14,12 @@ deny  edit edit AGENTS.md         :: AGENTS.md
 deny  edit edit task file         :: tasks/x.md
 @checkout main
 deny  sh   commit on main branch  :: git commit -am x
+allow sh   commit word in quotes  :: git status && echo "remember to git commit -am x"
+@worktree agent/wt-local
+allow sh   commit in agent worktree :: cd {worktree} && git commit -am x 2>&1
+allow sh   git -C agent worktree    :: git -C {worktree} commit -am x
 @checkout -
+@worktree feature/wt-local
+deny  sh   commit in human worktree :: cd {worktree} && git commit -am x
 deny  sh   create task script     :: bash scripts/factory/create-task.sh .agent-work/drafts/x.md --yes
 deny  sh   create sub-tasks       :: bash scripts/factory/create-tasks.sh .agent-work/breakdowns/x.md --yes

@@ -8,7 +8,7 @@
 # it stops before planning and writes questions; this script shows them and can post them on the issue.
 # If the plan exceeds complexity.env, the agent proposes a breakdown instead of code (create-issues.ps1).
 # Exit codes: 0 done, 2 no issue given, 4 issue not ready, 5 agent needs answers, 6 breakdown proposed,
-# other = CLI error.
+# 7 work committed but not pushed (no open PR for the branch), other = CLI error.
 param([string]$Issue, [switch]$Watch)
 $ErrorActionPreference = 'Stop'
 
@@ -109,5 +109,25 @@ if ((Test-Path -LiteralPath $bd) -and (Get-Item -LiteralPath $bd).Length -gt 0) 
   Write-Output ''
   Write-Output "Review and edit it, then create the sub-issues:  pwsh scripts/factory/create-issues.ps1 $(Join-Path $saved "issue-$Issue.md")"
   exit 6
+}
+
+# The agent committed work but no pull request is open for its branch (its push or PR failed or
+# was blocked): the work is only in this worktree, so a person has to look.
+$curBranch = [string](git branch --show-current)
+$ahead = 0
+$count = git rev-list --count "origin/$base..HEAD" 2>$null
+if ($LASTEXITCODE -eq 0 -and "$count" -match '^\d+$') { $ahead = [int]"$count" }
+if ($ahead -gt 0) {
+  $openPrs = ''
+  try { $openPrs = [string](gh pr list --head $curBranch --state open --json number --jq length 2>$null) } catch { }
+  if ($openPrs.Trim() -notmatch '^[1-9][0-9]*$') {
+    Write-Output ''
+    Write-Output "── Issue #${Issue}: the work is committed but not pushed: $ahead commit(s) on $curBranch, and no open"
+    Write-Output "   pull request for it. It is only in the worktree $wt."
+    Write-Output '   Check the run''s output for a blocked push, then push the branch and open the PR yourself, or'
+    Write-Output '   run again to let the agent finish.'
+    if ($rc -ne 0) { exit $rc }
+    exit 7
+  }
 }
 exit $rc

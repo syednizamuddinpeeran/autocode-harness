@@ -45,9 +45,18 @@ while IFS= read -r line; do
     b="${BASH_REMATCH[1]}"; [[ "$b" == "-" ]] && b="$agent_branch"
     git checkout -q "$b"; continue
   fi
+  if [[ "$line" =~ ^@worktree[[:space:]]+(.+)$ ]]; then
+    b="${BASH_REMATCH[1]}"; worktree=".agent-work/wt-${b//\//-}"
+    if [[ ! -d "$worktree" ]]; then
+      git rev-parse -q --verify "refs/heads/$b" >/dev/null || git branch -q "$b"
+      git worktree add -q "$worktree" "$b"
+    fi
+    continue
+  fi
   want="$(awk '{print $1}' <<<"$line")"; kind="$(awk '{print $2}' <<<"$line")"
   desc="$(sed -E 's/^[[:space:]]*[a-z]+[[:space:]]+[a-z]+[[:space:]]+//; s/[[:space:]]*::.*$//' <<<"$line")"
-  arg="${line#* :: }"; arg="${arg//\{branch\}/$agent_branch}"
+  arg="${line#* :: }"; arg="${arg//\{branch\}/$agent_branch}"; arg="${arg//\{worktree\}/${worktree:-}}"
+  arg="${arg//\\n/$'\n'}"
   case "$kind" in
     sh) expect "$want" "$desc [$FORMAT]" "$(sh "$arg")" ;;
     *)  expect "$want" "$desc [$FORMAT]" "$(ed "$kind" "$arg")" ;;

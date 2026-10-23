@@ -1,8 +1,11 @@
 # Guard self-test cases, shared by test-hooks.sh and test-hooks.ps1.
 # Format:  <allow|deny> <kind> <description> :: <argument>
 #   kind: sh (shell command) | view | edit | create (file tool with a path)
-#   {branch} in the argument is replaced with the test's agent branch.
+#   {branch} in the argument is replaced with the test's agent branch, {worktree} with the path of
+#   the last @worktree, and \n with a newline (multi-line commands, heredocs).
 # Directives:  @checkout <branch>   switch branch for the following cases ("-" = back to the agent branch)
+#              @worktree <branch>   add a second worktree (under .agent-work/) on <branch>, created from
+#                                   the current branch if missing; {worktree} names it
 # Repo type, OS and cloud layers append their own cases to this file.
 
 allow sh   run tests            :: npm test

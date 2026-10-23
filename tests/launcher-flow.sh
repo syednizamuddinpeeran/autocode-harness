@@ -3,6 +3,7 @@
 #   - not ready  → exit 4 and the agent never starts
 #   - ready, agent writes questions.md → exit 5 and the questions are shown
 #   - ready, agent finishes → exit 0
+#   - github: agent commits but opens no PR → exit 7 (with an open PR → exit 0)
 #   - local: an edited task restarts a worktree that has no commits yet
 #   - agent proposes a breakdown → exit 6, saved; create-tasks / create-issues create the sub-items
 set -uo pipefail
@@ -51,6 +52,10 @@ elif [[ "$1 $2" == "issue create" ]]; then
   echo "https://example.test/issues/$n"
 elif [[ "$1 $2" == "issue comment" ]]; then
   printf '%s\n' "$@" > "$FAKE_GH_COMMENT"
+elif [[ "$1 $2" == "pr list" ]]; then
+  # open PRs for --head <branch>: FAKE_PR_OPEN=1 reports one (as `--jq length` would print it)
+  printf '%s\n' "$@" > "$FAKE_GH_PR_LIST"
+  [[ -n "${FAKE_PR_OPEN:-}" ]] && echo 1 || echo 0
 elif [[ "$1 $2" == "pr view" ]]; then
   jq -n --arg b "$(cat "$FAKE_PR_BODY")" --arg h "$FAKE_PR_HEAD" '{body: $b, headRefName: $h, author: {login: "Copilot"}, url: "https://example.test/pull/9"}'
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
@@ -67,6 +72,7 @@ SH
 chmod +x "$bin"/*
 export PATH="$bin:$PATH" FAKE_LOG="$tmp/agent.log" FAKE_GH_CREATE="$tmp/gh-create.args"
 export FAKE_GH_SEQ="$tmp/gh-seq" FAKE_GH_API="$tmp/gh-api.log" FAKE_GH_COMMENT="$tmp/gh-comment.args"
+export FAKE_GH_PR_LIST="$tmp/gh-pr-list.args"
 bd="$root/tests/fixtures/breakdown"
 export FAKE_BRIEF="$bd/brief.md"
 
@@ -184,6 +190,14 @@ grep -q "Which columns are exported" <<<"$out" || { echo "FAIL github: questions
 out="$(bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
 check "github: ready issue runs" 0 "$rc"
 [[ ! -e "$tmp/gh-worktrees/issue-7/.agent-work/issue-7/questions.md" ]] || { echo "FAIL github: stale questions.md kept"; fail=1; }
+
+# github: the agent committed but opened no PR (e.g. its push was blocked) → exit 7, "needs you"
+out="$(FAKE_AGENT=commit bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
+check "github: committed but no PR exits 7" 7 "$rc"
+grep -q "committed but not pushed" <<<"$out" || { echo "FAIL github: unpushed work not reported"; echo "$out"; fail=1; }
+grep -qx "agent/issue-7-add-csv-export" "$FAKE_GH_PR_LIST" || { echo "FAIL github: PR not looked up for the issue branch"; fail=1; }
+out="$(FAKE_PR_OPEN=1 bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
+check "github: committed with an open PR exits 0" 0 "$rc"
 
 # github: drafts → issue (human-only script)
 bash scripts/factory/create-issue.sh "$fx/bad-no-ac.md" --yes >/dev/null 2>&1; rc=$?
