@@ -5,9 +5,8 @@ description: Run the project's full verification gate (format, lint, typecheck, 
 
 # Verify changes
 
-1. Run: `bash scripts/factory/check.sh 2>&1 | tee <work folder>/verify.log`
-   (native Windows: `pwsh scripts/factory/check.ps1 *>&1 | Tee-Object <work folder>/verify.log`;
-   `<work folder>` is the work folder given in your prompt)
+1. Run: `bash scripts/factory/check.sh 2>&1 | tee .agent-work/<id>/verify.log`
+   (native Windows: `pwsh scripts/factory/check.ps1 *>&1 | Tee-Object .agent-work/<id>/verify.log`)
 2. Exit code 0 → verification passed. `check.sh` / `check.ps1` records a marker the stop hook uses;
    any later file change invalidates it, so re-run after every fix.
 3. Non-zero → read only the failing section of `verify.log`. Summarize each failure as

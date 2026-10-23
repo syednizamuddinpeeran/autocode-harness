@@ -5,7 +5,7 @@ description: Format and rules for writing an ordered, test-first implementation 
 
 # Implementation plan
 
-Write `plan.md` in the work folder given in your prompt, in this exact format:
+Write `.agent-work/<id>/plan.md` (`<id>` is `issue-N` or the task id) in this exact format:
 
 ```markdown
 # Plan for <issue #N | task id>
