@@ -5,8 +5,9 @@
 #   pwsh scripts/factory/new-draft.ps1 -Id csv-export "add CSV export to the reports page"
 #
 # Starts an interactive session with the `analyst` agent, which asks you questions and writes only
-# what you answer (unanswered items are marked OPEN). Result: .agent-work/drafts/<id>.md. Review it,
-# then run create-issue.ps1 (GitHub) or create-task.ps1 (local). Runs in a throwaway worktree.
+# what you answer (unanswered items are marked OPEN). Result: <DRAFTS_DIR>/<YYYY-MM-DDTHH-MM-SSZ>-<id>/draft.md
+# (DRAFTS_DIR is set in paths.env; a rerun with the same id reuses the folder). Review it, then run
+# create-issue.ps1 (GitHub) or create-task.ps1 (local). Runs in a throwaway worktree.
 param([Parameter(Position = 0)][string]$Brief, [string]$Id)
 $ErrorActionPreference = 'Stop'
 if (-not $Brief) { [Console]::Error.WriteLine('usage: new-draft.ps1 [-Id <slug>] "<short brief of what you want>"'); exit 2 }
@@ -15,6 +16,7 @@ if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { [Console]:
 $root = (git rev-parse --show-toplevel)
 Set-Location -LiteralPath $root
 . (Join-Path $root '.github/hooks/scripts/common.ps1')
+. (Join-Path $root 'scripts/factory/lib-paths.ps1')
 $cfg = Read-FactoryEnvFile (Join-Path $root 'scripts/factory/commands.env')
 $base = if ($cfg['BASE_BRANCH']) { $cfg['BASE_BRANCH'] } else { 'main' }
 $repoName = Split-Path -Leaf $root
@@ -24,8 +26,18 @@ if (-not $Id) {
   if ($Id.Length -gt 40) { $Id = $Id.Substring(0, 40).TrimEnd('-') }
 }
 if ($Id -cnotmatch '^[a-z0-9][a-z0-9._-]*$') { throw "draft id must be a lowercase slug: $Id" }
-$outDir = Join-Path $root '.agent-work/drafts'
-$out = Join-Path $outDir "$Id.md"
+# Reuse the newest existing folder for this id; otherwise name a new one with the helper.
+$newDir = New-Folder -Kind drafts -Slug $Id
+$draftsLoc = Split-Path -Parent $newDir.TrimEnd('/')
+if (-not [IO.Path]::IsPathRooted($draftsLoc)) { $draftsLoc = Join-Path $root $draftsLoc }
+$outDir = if ([IO.Path]::IsPathRooted($newDir)) { $newDir } else { Join-Path $root $newDir }
+if (Test-Path -LiteralPath $draftsLoc) {
+  $found = Get-ChildItem -LiteralPath $draftsLoc -Directory |
+    Where-Object { $_.Name -cmatch "^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-$([regex]::Escape($Id))$" } |
+    Sort-Object Name | Select-Object -Last 1
+  if ($found) { $outDir = $found.FullName }
+}
+$out = Join-Path $outDir 'draft.md'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 $existing = Test-Path -LiteralPath $out
 if ($existing) { Write-Output "A draft already exists: $out — the analyst will continue from it." }
