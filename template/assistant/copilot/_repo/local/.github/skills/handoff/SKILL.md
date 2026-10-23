@@ -7,12 +7,17 @@ description: Finish a task run on the local agent branch and write the handoff n
 
 There is no remote, pull request, or CI. The deliverable is the committed `agent/<id>` branch plus a handoff note.
 
+## Work folder
+Write every file this skill produces into the work folder named by the `Work folder: <path>` line in
+your prompt. If the prompt has no such line, stop with an error and write nothing; never fall back to a
+literal path.
+
 ## Preconditions
 - `verify-changes` passed in this session (unless writing a DRAFT handoff for a blocked run).
 - All work is committed on `agent/<id>`. Never commit to the base branch.
 
 ## Steps
-1. Write `.agent-work/<id>/handoff.md` using the body below.
+1. Write `handoff.md` in the work folder using the body below.
 2. Show the human the result: `git log --oneline <base>..HEAD` and `git diff --stat <base>...HEAD`.
 3. Stop. Do not merge, push, add remotes, or switch to the base branch. A human merges with
    `scripts/factory/accept.sh <id>`.
@@ -44,7 +49,7 @@ Branch: agent/<id>
 - ...
 
 ## Agent run
-Plan, review, and decisions: `.agent-work/<id>/`. Action log: `.agent-logs/<UTC-timestamp>-<session>/<session>.jsonl`.
+Plan, review, and decisions: the work folder. Action log: `.agent-logs/<UTC-timestamp>-<session>/<session>.jsonl`.
 ```
 
 ## Rules
