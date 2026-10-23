@@ -38,6 +38,18 @@ foreach ($repo in (Get-ChildItem (Join-Path $root 'template/repo') -Directory).N
     if (& pwsh -NoProfile -File (Join-Path $root 'install.ps1') $tmp -Repo $repo -Os windows -Assistant $assistant -Cloud aws | Select-String '^added:') { throw 're-install added files' }
     git add -A; git commit -qm installed
     & pwsh -NoProfile -File scripts/factory/test-hooks.ps1; if ($LASTEXITCODE -ne 0) { throw 'test-hooks.ps1 failed' }
+    $logs = Join-Path $tmp 'logs-check'
+    $env:FACTORY_LOG_DIR = $logs
+    try {
+      . (Join-Path $tmp '.github/hooks/scripts/common.ps1')
+      Write-FactoryLog 'sessionStart' '{"sessionId":"mysession"}'
+      Write-FactoryLog 'preToolUse' '{"sessionId":"mysession"}'
+    } finally { Remove-Item Env:FACTORY_LOG_DIR -ErrorAction SilentlyContinue }
+    $sf = @(Get-ChildItem -LiteralPath $logs -Directory | Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-mysession$' })
+    if ($sf.Count -ne 1) { throw "want one UTC session folder, got $($sf.Count)" }
+    if (@(Get-Content -LiteralPath (Join-Path $sf[0].FullName 'mysession.jsonl')).Count -ne 2) { throw 'session log should have 2 lines' }
+    if (Test-Path -LiteralPath (Join-Path $logs 'mysession.jsonl')) { throw 'flat session log written' }
+    if (-not (Select-String -LiteralPath (Join-Path $logs 'index.jsonl') -Pattern 'sessionStart' -Quiet)) { throw 'index.jsonl lacks sessionStart' }
     foreach ($fx in Get-ChildItem (Join-Path $root 'tests/fixtures/ready') -Filter *.md) {
       $want = if ($fx.Name -like 'bad-*') { 4 } else { 0 }
       & pwsh -NoProfile -File scripts/factory/check-ready.ps1 $fx.FullName | Out-Null
