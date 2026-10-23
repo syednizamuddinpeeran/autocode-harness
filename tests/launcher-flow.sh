@@ -12,6 +12,8 @@
 #   - agent proposes a breakdown → exit 6, saved; create-tasks / create-issues create the sub-items
 #   - pwsh (run-issue.ps1, when pwsh is installed): stamped work folder reused, WORK_DIR followed, and
 #     questions.md / breakdown.md filed in the recorded draft folder as in bash
+#   - windows (pwsh, skipped without pwsh): run-task.ps1 uses the stamped work folder, names it in the prompt,
+#     and files questions / breakdown in the recorded draft folder
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fx="$root/tests/fixtures/ready"
@@ -35,6 +37,8 @@ if [[ "$1 $2" == "--agent analyst" ]]; then
   exit 0
 fi
 echo ran >> "$FAKE_LOG"
+# Record the prompt the agent received, one argument per line (the pwsh block checks its Work folder line).
+printf '%s\n' "$@" > "$FAKE_LOG.prompt"
 # The work folder is named in the prompt ("Work folder: <path>"); fall back to the first folder under .agent-work.
 d="$(sed -n 's/^Work folder: \([^ ]*\).*/\1/p' <<<"$*" | head -1)"
 [[ -n "$d" ]] && d="${d%/}/" || d="$(ls -d .agent-work/*/ | head -1)"
@@ -96,11 +100,11 @@ export FAKE_GH_PR_LIST="$tmp/gh-pr-list.args"
 bd="$root/tests/fixtures/breakdown"
 export FAKE_BRIEF="$bd/brief.md"
 
-setup_repo() { # setup_repo <repo-type> <dir>
+setup_repo() { # setup_repo <repo-type> <dir> [os: linux|windows, default linux]
   mkdir -p "$2" && cd "$2" || exit 1
   git init -q -b main . && git config user.email t@t && git config user.name t
   echo x > README.md && git add -A && git commit -qm init
-  bash "$root/install.sh" . --repo "$1" >/dev/null
+  bash "$root/install.sh" . --repo "$1" --os "${3:-linux}" >/dev/null
   sed -i 's/^ALLOW_NO_CHECKS=0/ALLOW_NO_CHECKS=1/' scripts/factory/commands.env
   git add -A && git commit -qm factory
 }
@@ -263,6 +267,56 @@ check "local: run-batch --auto-continue finishes" 0 "$rc"
 grep -q "All sub-tasks of t1 are merged" <<<"$out" || { echo "FAIL local: auto-continue did not run every sub-task"; echo "$out"; fail=1; }
 [[ "$(grep -c '^start' <<<"$out")" == 2 ]] || { echo "FAIL local: auto-continue should start t1.2 and t1.3"; fail=1; }
 check "local: run-batch with no sub-tasks" 2 "$(bash scripts/factory/run-batch.sh nope >/dev/null 2>&1; echo $?)"
+
+# ---- local repo, Windows: run-task.ps1 (pwsh) ----
+# The PowerShell launcher mirrors run-task.sh: a stamped work folder that is reused on rerun and follows a
+# changed WORK_DIR, a "Work folder:" prompt line, and questions/breakdown filed in the recorded draft folder.
+if command -v pwsh >/dev/null 2>&1; then
+  setup_repo local "$tmp/win" windows
+  cp "$fx/ok-task.md" tasks/tw.md && git add tasks && git commit -qm "task: tw"
+  wtw="$tmp/win-worktrees/tw"
+  stamp_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-tw$'
+  rm -f "$FAKE_LOG.prompt"
+  out="$(pwsh -NoProfile -File scripts/factory/run-task.ps1 tw 2>&1)"; rc=$?
+  check "win: run-task.ps1 exits 0" 0 "$rc"
+  # AC1: one <UTC stamp>-tw folder under WORK_DIR, reused on rerun.
+  w1=("$wtw"/.agent-work/*Z-tw)
+  [[ "${#w1[@]}" == 1 && "$(basename "${w1[0]}")" =~ $stamp_re ]] \
+    || { echo "FAIL win: work folder is not <UTC stamp>-tw (got: ${w1[*]})"; fail=1; }
+  # AC3: the prompt the agent received names that folder on its own line.
+  wf1="${w1[0]#"$wtw"/}"
+  grep -qxF "Work folder: $wf1" "$FAKE_LOG.prompt" 2>/dev/null \
+    || { echo "FAIL win: prompt does not name the Work folder ($wf1)"; fail=1; }
+  pwsh -NoProfile -File scripts/factory/run-task.ps1 tw >/dev/null 2>&1
+  w2=("$wtw"/.agent-work/*Z-tw)
+  [[ "${#w2[@]}" == 1 && "${w2[0]}" == "${w1[0]}" ]] || { echo "FAIL win: rerun did not reuse the work folder (got: ${w2[*]})"; fail=1; }
+  # AC2: a changed WORK_DIR moves the next run's folder and writes nothing under the old location.
+  sed -i 's|^WORK_DIR=.*|WORK_DIR=.moved-work|' "$wtw/scripts/factory/paths.env"
+  pwsh -NoProfile -File scripts/factory/run-task.ps1 tw >/dev/null 2>&1
+  w3=("$wtw"/.moved-work/*Z-tw)
+  [[ "${#w3[@]}" == 1 && -d "${w3[0]}" ]] || { echo "FAIL win: changed WORK_DIR did not move the new run's work folder (got: ${w3[*]})"; fail=1; }
+  w4=("$wtw"/.agent-work/*Z-tw)
+  [[ "${#w4[@]}" == 1 && "${w4[0]}" == "${w1[0]}" ]] || { echo "FAIL win: run after WORK_DIR change wrote under the old location (got: ${w4[*]})"; fail=1; }
+  # AC4: questions.md / breakdown.md are filed in the draft folder whose created.txt names the task.
+  ld=".agent-work/drafts/2026-01-02T03-04-08Z-tw"; mkdir -p "$ld" && printf 'task=tw\npath=tasks/tw.md\n' > "$ld/created.txt"
+  out="$(FAKE_AGENT=questions pwsh -NoProfile -File scripts/factory/run-task.ps1 tw 2>&1)"; rc=$?
+  check "win: questions run with a recorded draft exits 5" 5 "$rc"
+  check "win: questions.md filed in the recorded draft folder" \
+    "1. Which columns are exported? — Why it matters: changes the CSV header." "$(cat "$ld/questions.md" 2>/dev/null)"
+  [[ ! -e "$ld/breakdown.md" ]] || { echo "FAIL win: breakdown.md filed after a questions run"; fail=1; }
+  rm -f "$ld/questions.md"
+  out="$(FAKE_AGENT=breakdown FAKE_BREAKDOWN="$tmp/bd-task.md" pwsh -NoProfile -File scripts/factory/run-task.ps1 tw 2>&1)"; rc=$?
+  check "win: breakdown run with a recorded draft exits 6" 6 "$rc"
+  cmp -s "$tmp/bd-task.md" "$ld/breakdown.md" || { echo "FAIL win: breakdown.md not filed in the recorded draft folder"; fail=1; }
+  [[ ! -e "$ld/questions.md" ]] || { echo "FAIL win: questions.md filed after a breakdown run"; fail=1; }
+  rm -rf "$ld"
+  out="$(FAKE_AGENT=questions pwsh -NoProfile -File scripts/factory/run-task.ps1 tw 2>&1)"; rc=$?
+  check "win: questions run without a record exits 5" 5 "$rc"
+  shopt -s nullglob; none=(.agent-work/drafts/*/questions.md .agent-work/drafts/*/breakdown.md); shopt -u nullglob
+  check "win: nothing filed without a record" 0 "${#none[@]}"
+else
+  echo "skip win: run-task.ps1 checks (pwsh not installed)"
+fi
 
 # ---- github repo ----
 setup_repo github "$tmp/gh"
