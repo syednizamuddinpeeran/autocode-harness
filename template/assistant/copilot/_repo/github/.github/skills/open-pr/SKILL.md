@@ -56,7 +56,7 @@ Closes #N
 - ...
 
 ## Agent run
-Plan, review, and decisions: `.agent-work/issue-N/` (local only). Action log: `.agent-logs/<session>.jsonl`.
+Plan, review, and decisions: `.agent-work/issue-N/` (local only). Action log: `.agent-logs/<UTC-timestamp>-<session>/<session>.jsonl`.
 ```
 
 ## Rules

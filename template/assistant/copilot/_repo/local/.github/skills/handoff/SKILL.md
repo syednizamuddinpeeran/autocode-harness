@@ -44,7 +44,7 @@ Branch: agent/<id>
 - ...
 
 ## Agent run
-Plan, review, and decisions: `.agent-work/<id>/`. Action log: `.agent-logs/<session>.jsonl`.
+Plan, review, and decisions: `.agent-work/<id>/`. Action log: `.agent-logs/<UTC-timestamp>-<session>/<session>.jsonl`.
 ```
 
 ## Rules
