@@ -58,6 +58,60 @@ function ConvertTo-NetRegex([string]$Pattern) {
 }
 
 # ---------- shell commands ----------
+# Words that run their arguments (or set up a program that does): quoted text after them is code.
+# Same list as guard.sh (exec_words).
+$ExecWords = '(^|[^A-Za-z0-9_])(bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|wsl|eval|exec|source|xargs|env|command|builtin|time|nohup|nice|timeout|watch|start|call|iex|invoke-expression|invoke-command|start-process|start-job|ssh|python[0-9.]*|perl|ruby|node|php|make|alias|editor|visual|pager|browser|foreach|run|-c|-x|git_[a-z_]*)'
+
+# Test-GitOrGhSegments <code view with line breaks>: $true when there is at least one command and
+# every command in it starts with git or gh. Commands are split at ; | & ( ) { } and line breaks;
+# a >& or &> redirection is not a split. Same rule as starts_git_or_gh in guard.sh.
+function Test-GitOrGhSegments([string]$Code) {
+  $found = $false
+  $t = ($Code -replace '>&', '>') -replace '&>', '>'
+  foreach ($line in ($t -split '[;|&(){}\r\n]')) {
+    $s = $line.Trim()
+    if ($s -eq '') { continue }
+    if ($s -notmatch '^(git|gh)(\s|$)') { return $false }
+    $found = $true
+  }
+  return $found
+}
+
+# Get-CodeView <command>: the text the deny patterns are matched against first. The rules of
+# code_view in guard.sh, with PowerShell escapes: a backtick escapes the next character, and a
+# quote in a row ("" or '') is a fallback. The command keeps its line breaks, which end a command.
+# Returns View and Fallback (the caller then matches the raw command too). A command that does not
+# start with git or gh is a fallback, as is any word in $ExecWords.
+function Get-CodeView([string]$Command) {
+  $sb = [System.Text.StringBuilder]::new()
+  $fallback = $false
+  $n = $Command.Length; $i = 0
+  while ($i -lt $n) {
+    $c = $Command[$i]
+    if ($c -eq '`') { [void]$sb.Append($Command.Substring($i, [Math]::Min(2, $n - $i))); $i += 2; continue }
+    if ($c -ne "'" -and $c -ne '"') { [void]$sb.Append($c); $i++; continue }
+    $j = $i + 1; $closed = $false
+    while ($j -lt $n) {
+      $d = $Command[$j]
+      if ($c -eq '"' -and $d -eq '`') { $j += 2; continue }
+      if ($d -eq $c) { $closed = $true; break }
+      $j++
+    }
+    if (-not $closed) { $fallback = $true; [void]$sb.Append($Command.Substring($i)); break }
+    $body = $Command.Substring($i + 1, $j - $i - 1)
+    if ($j + 1 -lt $n -and $Command[$j + 1] -eq $c) { $fallback = $true }
+    if ($body -match '[$`\\]') { [void]$sb.Append($Command.Substring($i, $j - $i + 1)) }
+    elseif ($body -match '\s') { [void]$sb.Append('""') }
+    else { [void]$sb.Append($body) }
+    $i = $j + 1
+  }
+  $code = $sb.ToString()
+  $view = (($code -replace '[\r\n\t]', ' ') -replace ' {2,}', ' ')
+  if ($view -match '[$`]|<<|@[''"]' -or $view -match $ExecWords) { $fallback = $true }
+  if (-not $fallback -and -not (Test-GitOrGhSegments $code)) { $fallback = $true }
+  return @{ View = $view; Fallback = $fallback }
+}
+
 function Test-Shell {
   $cmd = ''
   foreach ($k in 'command', 'cmd', 'script', 'input', 'raw') {
@@ -65,9 +119,11 @@ function Test-Shell {
   }
   if (-not $cmd) { $cmd = $argsJson }
   $norm = ($cmd -replace '[\r\n\t]', ' ') -replace ' {2,}', ' '
+  $cv = Get-CodeView ($cmd -replace '\r', '')
 
   foreach ($pat in Get-Patterns (Join-Path $policyDir 'deny-commands.txt')) {
-    if ($norm -match (ConvertTo-NetRegex $pat)) { Deny "command matches denied pattern [$pat]" }
+    $rx = ConvertTo-NetRegex $pat
+    if ($cv.View -match $rx -or ($cv.Fallback -and $norm -match $rx)) { Deny "command matches denied pattern [$pat]" }
   }
 
   $rules = Read-FactoryEnvFile (Join-Path $policyDir 'git-rules.env')
