@@ -55,7 +55,8 @@ function Get-FactorySessionId($Payload) {
 }
 
 # Write-FactoryLog <event> <payload-json> [extra hashtable]
-# Appends one JSON line to .agent-logs/<sessionId>.jsonl and, for session start/end, to index.jsonl.
+# Appends one JSON line to <logs>/<UTC-timestamp>Z-<sessionId>/<sessionId>.jsonl (the folder is created
+# on the session's first event) and, for session start/end, to <logs>/index.jsonl.
 function Write-FactoryLog([string]$EventName, [string]$PayloadJson, [System.Collections.IDictionary]$Extra = @{}) {
   $dir = Get-FactoryLogDir
   $ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
@@ -73,7 +74,10 @@ function Write-FactoryLog([string]$EventName, [string]$PayloadJson, [System.Coll
     $o = [ordered]@{ ts = $ts; event = $EventName; unparsed = $raw }
   }
   $line = Protect-FactoryText ($o | ConvertTo-Json -Compress -Depth 100)
-  Add-Content -LiteralPath (Join-Path $dir "$sid.jsonl") -Value $line -Encoding utf8
+  $sdir = Get-ChildItem -LiteralPath $dir -Directory -Filter "????-??-??T??-??-??Z-$sid" -ErrorAction SilentlyContinue | Select-Object -First 1
+  $sdir = if ($sdir) { $sdir.FullName } else { Join-Path $dir ((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH-mm-ss') + "Z-$sid") }
+  New-Item -ItemType Directory -Force -Path $sdir -ErrorAction SilentlyContinue | Out-Null
+  Add-Content -LiteralPath (Join-Path $sdir "$sid.jsonl") -Value $line -Encoding utf8
   if ($EventName -in 'sessionStart', 'sessionEnd') {
     $idx = [ordered]@{ ts = $o['ts']; event = $EventName; sessionId = $sid; branch = $o['branch']; surface = $o['surface'] }
     foreach ($k in 'reason', 'source') { $idx[$k] = if ($o.Contains($k)) { $o[$k] } else { $null } }

@@ -97,7 +97,7 @@ try {
   if ((Stop-Decision) -eq 'block') { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: stop gate should block after a new edit' }
 
   # logging
-  $log = '.agent-logs/test.jsonl'
+  $log = (Get-ChildItem '.agent-logs' -Directory -Filter '*Z-test' | Select-Object -First 1).FullName + '/test.jsonl'
   $valid = (Test-Path $log) -and @(Get-Content $log | Where-Object { $_ } | ForEach-Object { try { $_ | ConvertFrom-Json | Out-Null; $true } catch { $false } }) -notcontains $false
   if ($valid) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: log file missing or invalid JSONL' }
   Invoke-Hook 'log.ps1' '{"sessionId":"test","toolName":"bash","toolArgs":{"command":"echo ghp_abcdefghijklmnopqrstuvwxyz0123"}}' @('postToolUse') | Out-Null

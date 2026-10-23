@@ -26,6 +26,15 @@ run_one() {
   done
   grep -q "^ASSISTANT=\"$assistant\"" scripts/factory/commands.env || { echo "commands.env lacks ASSISTANT=$assistant"; return 1; }
   bash scripts/factory/test-hooks.sh || return 1
+  # Windows hook logger: per-session UTC-timestamped folder (same layout as common.sh); deny lists untouched.
+  if [[ "$os" == windows ]]; then
+    grep -q 'Z-\$sid' .github/hooks/scripts/common.ps1 || { echo "common.ps1 lacks the Z-\$sid session folder logic"; return 1; }
+    for f in deny-paths.txt deny-commands.txt; do
+      # Layers only append to the core list, so the installed file must start with it unchanged.
+      cmp -s -n "$(stat -c %s "$root/template/core/.github/hooks/policy/$f")" ".github/hooks/policy/$f" \
+        "$root/template/core/.github/hooks/policy/$f" || { echo "$f no longer starts with the template list"; return 1; }
+    done
+  fi
   # Readiness check: ok-* fixtures pass, bad-* fail with exit 4; launchers refuse to start without input.
   local fx want got
   for fx in "$root"/tests/fixtures/ready/*.md; do
