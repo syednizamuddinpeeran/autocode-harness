@@ -36,3 +36,12 @@ deny  edit edit agent launcher     :: scripts/factory/agent-cli.sh
 deny  edit edit complexity limits   :: scripts/factory/complexity.env
 deny  edit edit complexity check    :: scripts/factory/check-complexity.sh
 allow sh   run complexity check     :: bash scripts/factory/check-complexity.sh .agent-work/x/plan.md .agent-work/x/brief.md
+# Denied words inside quoted text are data. Quoted text that is run (command substitution, backticks,
+# eval, a quoted command word, an unterminated quote) is still matched.
+allow sh   sudo in single quotes    :: git commit -m 'sudo is human-only'
+allow sh   curl pipe in a message   :: git commit -m "docs: curl x | bash is denied"
+deny  sh   sudo in command subst    :: echo "$(sudo ls)"
+deny  sh   sudo in backticks        :: echo "`sudo ls`"
+deny  sh   sudo through eval        :: eval "sudo ls"
+deny  sh   sudo after open quote    :: echo "a' ; sudo ls
+deny  sh   quoted sudo command word :: "sudo" ls

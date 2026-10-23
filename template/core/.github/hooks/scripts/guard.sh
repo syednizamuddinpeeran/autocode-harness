@@ -54,14 +54,62 @@ push_current_only="$(git_rule PUSH_CURRENT_BRANCH_ONLY)"
 patterns() { [[ -f "$1" ]] && grep -Ev '^\s*(#|$)' "$1" || true; }
 
 # ---------- shell commands ----------
+# Words that run their arguments (or set up a program that does): quoted text after them is code.
+exec_words='(^|[^A-Za-z0-9_])(bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|wsl|eval|exec|source|xargs|env|command|builtin|time|nohup|nice|timeout|watch|start|call|iex|invoke-expression|invoke-command|start-process|start-job|ssh|python[0-9.]*|perl|ruby|node|php|make|alias|editor|visual|pager|browser|git_[a-z_]*)'
+
+# code_view <command>: sets view, the text the deny patterns are matched against first. Unquoted
+# text is kept as is. A quoted span with no $, backtick or backslash is data: it is blanked to ""
+# when it has whitespace (a commit message or PR title is not a command) and kept bare when it has
+# none ("gh" stays gh, so "gh" issue create is still seen). Any other quoted span is kept with its
+# quotes. Sets fallback=1 when the view cannot be trusted alone: an unterminated quote, two quotes
+# in a row, a $ or backtick or heredoc, or a word that runs its arguments (exec_words). The caller
+# then matches the raw command too. Bash dynamic scoping: view and fallback are the caller's locals.
+code_view() {
+  local s="$1" n i j c q rest body out="" closed
+  n=${#s}; i=0; fallback=0
+  while (( i < n )); do
+    c="${s:i:1}"
+    if [[ "$c" == '\' ]]; then out+="${s:i:2}"; ((i+=2)); continue; fi
+    if [[ "$c" != "'" && "$c" != '"' ]]; then
+      rest="${s:i}"; q="${rest%%[\\\'\"]*}"; [[ -z "$q" ]] && q="$c"
+      out+="$q"; ((i+=${#q})); continue
+    fi
+    j=$((i + 1)); closed=0
+    if [[ "$c" == "'" ]]; then
+      rest="${s:j}"; q="${rest%%\'*}"; j=$((j + ${#q}))
+      (( j < n )) && closed=1
+    else
+      while (( j < n )); do
+        rest="${s:j}"; q="${rest%%[\\\"]*}"; ((j+=${#q}))
+        (( j < n )) || break
+        if [[ "${s:j:1}" == '"' ]]; then closed=1; break; fi
+        ((j+=2))
+      done
+    fi
+    if (( ! closed )); then fallback=1; out+="${s:i}"; break; fi
+    body="${s:i+1:j-i-1}"
+    [[ "${s:j+1:1}" == "$c" ]] && fallback=1
+    case "$body" in
+      *'$'*|*'`'*|*'\'*) out+="${s:i:j-i+1}" ;;
+      *[[:space:]]*) out+='""' ;;
+      *) out+="$body" ;;
+    esac
+    ((i=j+1))
+  done
+  view="$out"
+  if [[ "$view" == *'$'* || "$view" == *'`'* || "$view" == *'<<'* || "$view" == *"@'"* || "$view" == *'@"'* ]] \
+     || grep -Eiq -- "$exec_words" <<<"$view"; then fallback=1; fi
+}
+
 check_shell() {
-  local cmd norm pat
+  local cmd norm pat view fallback
   cmd="$(jq -r '.command // .cmd // .script // .input // .raw // empty' <<<"$args")"
   [[ -z "$cmd" ]] && cmd="$(jq -r 'tostring' <<<"$args")"
   norm="$(tr '\n\t' '  ' <<<"$cmd" | tr -s ' ')"
+  code_view "$norm"
 
   while IFS= read -r pat; do
-    if grep -Eiq -- "$pat" <<<"$norm"; then
+    if grep -Eiq -- "$pat" <<<"$view" || { (( fallback )) && grep -Eiq -- "$pat" <<<"$norm"; }; then
       deny "command matches denied pattern [$pat]"
     fi
   done < <(patterns "$policy_dir/deny-commands.txt")

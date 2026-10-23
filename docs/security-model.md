@@ -33,7 +33,7 @@ The agent runs with broad tool permissions (`--allow-all-tools` locally), so saf
 ## How the guard works
 
 - Runs before **every** tool call; receives JSON on stdin.
-- **Shell:** the command is whitespace-normalised and matched case-insensitively against every regex in `deny-commands.txt`. A match returns `{"permissionDecision":"deny",…}`.
+- **Shell:** the command is whitespace-normalised and matched case-insensitively against every regex in `deny-commands.txt`. The regexes match a "code view", not the raw text: quoted text with whitespace (a commit message, PR title or body) is blanked, so `git commit -m "docs: gh issue create is human-only"` is allowed. A quoted span with `$`, a backtick or a backslash, and a single-word quote (`"gh"` → `gh`), stay visible. When the text may run (an unterminated quote, two quotes in a row, `$`, a backtick, a heredoc, or a word such as `bash`, `sh`, `eval`, `xargs`, `env`, `alias`, `editor`, `git_*`), the raw command is matched too, so `bash -c "gh issue create"` and `eval "sudo ls"` stay denied. A commit message that names both a trigger word and a denied command is denied (over-denial, the same as before this rule). A match returns `{"permissionDecision":"deny",…}`.
 - **Files:** every path-like argument (including `apply_patch` headers) is matched against `deny-paths.txt`. Plain rules block read and write (secrets); `write:` rules block writes only (hooks, workflows, `check.sh`, `commands.env`, logs, `.git/`).
 - **Fail-closed:** a crash or non-zero exit denies the call (for `preToolUse`, the CLI treats any non-zero exit as deny).
 - **Fail-open on timeout:** if the hook exceeds `timeoutSec` (15s) it is killed and the call is allowed. Keep the scripts fast.
