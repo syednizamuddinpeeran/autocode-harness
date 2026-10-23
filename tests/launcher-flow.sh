@@ -77,6 +77,9 @@ elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL
   # Simulated network failure: the next <count in $FAKE_GH_API_FAIL> matching api calls fail.
   echo $(( $(cat "$FAKE_GH_API_FAIL") - 1 )) > "$FAKE_GH_API_FAIL"
   echo "Get \"https://api.github.com/$2\": dial tcp: i/o timeout" >&2; exit 1
+elif [[ "$1" == api && "$2" == repos/*/pulls* ]]; then
+  # open PRs: their head branch names, one per line (FAKE_OPEN_PR_HEADS), as the --jq output prints them
+  [[ -n "${FAKE_OPEN_PR_HEADS:-}" ]] && printf '%s\n' "$FAKE_OPEN_PR_HEADS"
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
   cat "$FAKE_SUBS"          # already in the --jq output form: "<number> <state>"
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
@@ -495,8 +498,26 @@ grep -qE "#9 +needs you" <<<"$out" || { echo "FAIL github: a worktree without co
 BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue >/dev/null 2>&1; rc=$?
 [[ $rc -ne 124 ]] || { echo "FAIL github: run-batch --auto-continue waits for a stopped sub-issue"; fail=1; }
 (cd "$tmp/gh-worktrees/issue-9" && echo w > work.txt && git add work.txt && git commit -qm "feat: work")
+br9="$(git -C "$tmp/gh-worktrees/issue-9" branch --show-current)"
+# Commits but no open PR for the branch: needs you, and the batch does not wait for it.
 out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
-grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL github: a worktree with commits is not shown as awaiting review"; echo "$out"; fail=1; }
+grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" && ! grep -qE "#9 +started: review" <<<"$out" \
+  || { echo "FAIL github: a worktree with commits and no PR is not shown as needing you"; echo "$out"; fail=1; }
+BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue >/dev/null 2>&1; rc=$?
+[[ $rc -ne 124 ]] || { echo "FAIL github: run-batch --auto-continue waits for a commits-but-no-PR sub-issue"; fail=1; }
+# An open PR for the branch: still awaiting review.
+out="$(FAKE_OPEN_PR_HEADS="$br9" bash scripts/factory/run-batch.sh 7 --list 2>&1)"
+grep -qE "#9 +started: review and merge its PR" <<<"$out" || { echo "FAIL github: a worktree with commits and an open PR is not shown as awaiting review"; echo "$out"; fail=1; }
+# The open-PR lookup fails: the sub-issue keeps "started: review" and the batch still exits 0 for --list.
+echo 99 > "$tmp/gh-fail-pulls"
+out="$(FAKE_GH_API_FAIL="$tmp/gh-fail-pulls" FAKE_GH_API_FAIL_ON=pulls bash scripts/factory/run-batch.sh 7 --list 2>&1)"; rc=$?
+check "github: run-batch --list exits 0 when the open-PR lookup fails" 0 "$rc"
+grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL github: a failed open-PR lookup does not keep started: review"; echo "$out"; fail=1; }
+# A run that finishes with exit 0 in this batch, with no open PR for its branch: needs you, not waited for.
+git worktree remove --force "$tmp/gh-worktrees/issue-9" && git branch -D "$br9" >/dev/null
+out="$(FAKE_AGENT=commit FAKE_PR_OPEN=1 BATCH_POLL_SECONDS=1 timeout 120 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
+check "github: a finished run with commits and no PR exits 0" 0 "$rc"
+grep -qE "#9 +needs you: commits but no PR" <<<"$out" || { echo "FAIL github: a finished run with no PR is not shown as needing you"; echo "$out"; fail=1; }
 printf '9 closed\n10 closed\n11 closed\n' > "$FAKE_SUBS"
 out="$(bash scripts/factory/run-batch.sh 7 2>&1)"; rc=$?
 grep -q "All sub-issues of #7 are closed" <<<"$out" || { echo "FAIL github: closed sub-issues not recognised"; fail=1; }
@@ -562,6 +583,26 @@ if command -v pwsh >/dev/null; then
   check "ps: breakdown run with a recorded draft exits 6" 6 "$rc"
   cmp -s "$bd/ok.md" "$ld/breakdown.md" || { echo "FAIL ps: breakdown.md not filed in the recorded draft folder"; fail=1; }
   [[ ! -e "$ld/questions.md" ]] || { echo "FAIL ps: questions.md filed after a breakdown run"; fail=1; }
+
+  # run-batch.ps1 shows the same states as run-batch.sh for a worktree with commits (issue #158): no open PR
+  # is "needs you" and not waited for; an open PR for its branch is "started: review"; a failed PR lookup
+  # keeps "started: review".
+  printf '9 open\n10 open\n11 open\n' > "$FAKE_SUBS"
+  git -C "$ps" worktree add -q -b agent/issue-9-ps "$tmp/ps-worktrees/issue-9" origin/main
+  (cd "$tmp/ps-worktrees/issue-9" && echo w > work.txt && git add work.txt && git commit -qm "feat: work")
+  psbr9="$(git -C "$tmp/ps-worktrees/issue-9" branch --show-current)"
+  out="$(pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"; rc=$?
+  check "ps batch: -List exits 0 with a worktree with commits and no PR" 0 "$rc"
+  grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" && ! grep -qE "#9 +started: review" <<<"$out" \
+    || { echo "FAIL ps batch: a worktree with commits and no PR is not shown as needing you"; echo "$out"; fail=1; }
+  BATCH_POLL_SECONDS=1 timeout 60 pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -AutoContinue >/dev/null 2>&1; rc=$?
+  [[ $rc -ne 124 ]] || { echo "FAIL ps batch: -AutoContinue waits for a commits-but-no-PR sub-issue"; fail=1; }
+  out="$(FAKE_OPEN_PR_HEADS="$psbr9" pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"
+  grep -qE "#9 +started: review and merge its PR" <<<"$out" || { echo "FAIL ps batch: a worktree with commits and an open PR is not shown as awaiting review"; echo "$out"; fail=1; }
+  echo 99 > "$tmp/ps-gh-fail-pulls"
+  out="$(FAKE_GH_API_FAIL="$tmp/ps-gh-fail-pulls" FAKE_GH_API_FAIL_ON=pulls pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"; rc=$?
+  check "ps batch: -List exits 0 when the open-PR lookup fails" 0 "$rc"
+  grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL ps batch: a failed open-PR lookup does not keep started: review"; echo "$out"; fail=1; }
   shopt -u nullglob
 else
   echo "skip ps launcher flow (pwsh not installed)"

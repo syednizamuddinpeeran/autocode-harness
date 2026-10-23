@@ -51,7 +51,7 @@ poll="${BATCH_POLL_SECONDS:-60}"
 logs="$root/.agent-logs/batch"; mkdir -p "$logs"
 wt_root="${FACTORY_WORKTREE_ROOT:-$(dirname "$root")/$(basename "$root")-worktrees}"
 
-declare -A pid=() rc=() st=() blockers=()
+declare -A pid=() rc=() st=() blockers=() prs=()
 subs=()
 # gh api with retries: a failed call (e.g. a network timeout) is tried again up to BATCH_GH_RETRIES
 # times (default 3), BATCH_GH_RETRY_SECONDS apart (default 5), before the batch gives up (exit 1).
@@ -70,10 +70,27 @@ gh_api() {
     sleep "${BATCH_GH_RETRY_SECONDS:-5}"
   done
 }
-# Refresh sub-issue states and open blockers from GitHub.
+# Whether a sub-issue with commits has an open PR for its branch: prs[n] is open, none, or unknown (the
+# lookup failed, so it still reads as awaiting review). Unset when it has no commits. Run only from
+# refresh() and reap(), never from state(), which runs in a subshell.
+pr_check() {
+  local n="$1" wt="$wt_root/issue-$1" branch refs
+  if [[ "$(git -C "$wt" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0)" -le 0 ]]; then
+    unset "prs[$n]"; return
+  fi
+  branch="$(git -C "$wt" branch --show-current 2>/dev/null || true)"
+  if [[ -z "$branch" ]]; then prs[$n]=unknown; return; fi
+  # A failed gh_api exits only this command substitution, so the if takes the unknown branch.
+  if refs="$(gh_api "repos/{owner}/{repo}/pulls?state=open" --paginate --jq '.[].head.ref')"; then
+    if grep -Fxq -- "$branch" <<<"$refs"; then prs[$n]=open; else prs[$n]=none; fi
+  else
+    prs[$n]=unknown
+  fi
+}
+# Refresh sub-issue states, open blockers and open PRs from GitHub.
 refresh() {
   local n s rows
-  subs=(); st=(); blockers=()
+  subs=(); st=(); blockers=(); prs=()
   rows="$(gh_api "repos/{owner}/{repo}/issues/$parent/sub_issues" --paginate --jq '.[] | "\(.number) \(.state)"')"
   while read -r n s; do
     [[ -n "$n" ]] || continue
@@ -81,20 +98,25 @@ refresh() {
     if [[ "$s" == open ]]; then
       blockers[$n]="$(gh_api "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --paginate \
         --jq '.[] | select(.state == "open") | "#\(.number)"' | tr '\n' ' ')"
+      pr_check "$n"
     fi
   done <<<"$rows"
 }
-# State of one sub-issue: closed | running | stopped | review | blocked | ready
+# State of one sub-issue: closed | running | stopped | review | nopr | blocked | ready
+# review: awaiting its PR (or the PR lookup failed); nopr: has commits but no open PR, so nobody will merge it.
 state() {
   local n="$1"
   [[ "${st[$n]}" == open ]] || { echo closed; return; }
   [[ -n "${pid[$n]:-}" ]] && { echo running; return; }
   [[ -n "${rc[$n]:-}" && "${rc[$n]}" != 0 ]] && { echo stopped; return; }
-  [[ -n "${rc[$n]:-}" ]] && { echo review; return; }
+  [[ -n "${rc[$n]:-}" ]] && { if [[ "${prs[$n]:-}" == none ]]; then echo nopr; else echo review; fi; return; }
   # Started by an earlier batch: commits mean it awaits review; none mean it stopped (questions, breakdown).
   if [[ -d "$wt_root/issue-$n" ]]; then
     if [[ "$(git -C "$wt_root/issue-$n" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0)" -gt 0 ]]; then
-      echo review; else echo stopped; fi
+      if [[ "${prs[$n]:-}" == none ]]; then echo nopr; else echo review; fi
+    else
+      echo stopped
+    fi
     return
   fi
   [[ -z "${blockers[$n]// /}" ]] && { echo ready; return; }
@@ -108,6 +130,7 @@ show() {
       closed)  printf '  #%-6s closed\n' "$n" ;;
       running) printf '  #%-6s running (log: .agent-logs/batch/issue-%s.log)\n' "$n" "$n" ;;
       review)  printf '  #%-6s started: review and merge its PR (worktree %s)\n' "$n" "$wt_root/issue-$n" ;;
+      nopr)    printf '  #%-6s needs you: commits but no PR, run open-pr or delete the worktree\n' "$n" ;;
       stopped) printf '  #%-6s needs you: see .agent-logs/batch/issue-%s.log (questions, breakdown or failure)\n' "$n" "$n" ;;
       blocked) printf '  #%-6s blocked by: %s\n' "$n" "${blockers[$n]}" ;;
       ready)   printf '  #%-6s ready\n' "$n" ;;
@@ -126,6 +149,7 @@ reap() {
     if ! kill -0 "${pid[$n]}" 2>/dev/null; then
       local r=0; wait "${pid[$n]}" || r=$?
       rc[$n]=$r; unset "pid[$n]"
+      pr_check "$n"
       [[ $r -eq 0 ]] || failed=1
       echo "finished #$n (exit $r)"
     fi
