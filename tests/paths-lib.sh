@@ -43,6 +43,36 @@ w="$(bash -c ". '$tmp/copy/lib-paths.sh'; new_folder work s")"
 check "override changes drafts" "elsewhere/drafts" "${d%/*????-??-??T??-??-??Z-s/}"
 check "override leaves work" ".agent-work" "${w%/*????-??-??T??-??-??Z-s/}"
 
+# reuse_folder: newest existing {stamp}-{slug} is reused, else a new stamped folder; follows WORK_DIR
+mkdir -p "$tmp/reuse" "$tmp/wk1" "$tmp/wk2"; cp "$src/paths.env" "$src/lib-paths.sh" "$tmp/reuse/"
+sed -i "s|^WORK_DIR=.*|WORK_DIR=$tmp/wk1|" "$tmp/reuse/paths.env"
+mkdir -p "$tmp/wk1/2026-01-01T00-00-00Z-slug" "$tmp/wk1/2026-02-01T00-00-00Z-slug" \
+  "$tmp/wk1/2026-03-01T00-00-00Z-x-slug" "$tmp/wk1/2026-04-01T00-00-00Z-other"
+reuse() { bash -c ". '$tmp/reuse/lib-paths.sh'; reuse_folder $1"; }
+check "reuse newest existing" "$tmp/wk1/2026-02-01T00-00-00Z-slug/" "$(reuse slug)"
+out="$(reuse fresh)"
+re2="^$tmp/wk1/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-fresh/\$"
+ok=no; [[ "$out" =~ $re2 ]] && ok=yes
+check "reuse: new stamped folder when none" yes "$ok"
+sed -i "s|^WORK_DIR=.*|WORK_DIR=$tmp/wk2|" "$tmp/reuse/paths.env"
+out="$(reuse slug)"
+ok=no; [[ "$out" == "$tmp/wk2/"*-slug/ ]] && ok=yes
+check "reuse follows changed WORK_DIR" yes "$ok"
+
+# find_draft: prints the draft folder whose created.txt records number=N or task=ID; nothing otherwise
+mkdir -p "$tmp/dr/2026-01-01T00-00-00Z-a" "$tmp/dr/2026-01-02T00-00-00Z-b" "$tmp/dr/2026-01-03T00-00-00Z-c"
+printf 'number=12\nurl=x\n' > "$tmp/dr/2026-01-01T00-00-00Z-a/created.txt"
+printf 'task=T-5\n' > "$tmp/dr/2026-01-02T00-00-00Z-b/created.txt"
+sed -i "s|^DRAFTS_DIR=.*|DRAFTS_DIR=$tmp/dr|" "$tmp/reuse/paths.env"
+draft() { bash -c ". '$tmp/reuse/lib-paths.sh'; find_draft $1"; }
+check "find_draft by issue number" "$tmp/dr/2026-01-01T00-00-00Z-a/" "$(draft 12)"
+check "find_draft by task id" "$tmp/dr/2026-01-02T00-00-00Z-b/" "$(draft T-5)"
+check "find_draft prefix does not match" "" "$(draft 1)"
+check "find_draft no match" "" "$(draft 99)"
+sed -i "s|^DRAFTS_DIR=.*|DRAFTS_DIR=$tmp/nodrafts|" "$tmp/reuse/paths.env"
+draft 12 >/dev/null; check "find_draft missing dir exits 0" 0 "$?"
+check "find_draft missing dir prints nothing" "" "$(draft 12)"
+
 # Parity: the PowerShell helper gives the same result as bash for the same paths.env and a fixed UTC time
 if command -v pwsh >/dev/null 2>&1; then
   pssrc="$root/template/os/windows/scripts/factory"
