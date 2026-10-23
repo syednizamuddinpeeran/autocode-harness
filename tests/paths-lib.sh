@@ -43,6 +43,42 @@ w="$(bash -c ". '$tmp/copy/lib-paths.sh'; new_folder work s")"
 check "override changes drafts" "elsewhere/drafts" "${d%/*????-??-??T??-??-??Z-s/}"
 check "override leaves work" ".agent-work" "${w%/*????-??-??T??-??-??Z-s/}"
 
+# Parity: the PowerShell helper gives the same result as bash for the same paths.env and a fixed UTC time
+if command -v pwsh >/dev/null 2>&1; then
+  pssrc="$root/template/os/windows/scripts/factory"
+  fixed="2026-01-02T03-04-05Z"
+  mkdir -p "$tmp/shim" "$tmp/pscopy"
+  real_date="$(command -v date)"
+  cat > "$tmp/shim/date" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == "-u +%Y-%m-%dT%H-%M-%SZ" ]]; then echo "$fixed"; else exec "$real_date" "\$@"; fi
+SHIM
+  chmod +x "$tmp/shim/date"
+  cp "$src/paths.env" "$src/lib-paths.sh" "$pssrc/lib-paths.ps1" "$tmp/pscopy/"
+  mkdir -p "$tmp/pscopy2"; cp "$tmp/copy/paths.env" "$tmp/copy/lib-paths.sh" "$pssrc/lib-paths.ps1" "$tmp/pscopy2/"
+  for dir in "$src:$pssrc" "$tmp/pscopy2:$tmp/pscopy2"; do
+    bdir="${dir%%:*}"; pdir="${dir##*:}"
+    for which in drafts work; do
+      b="$(PATH="$tmp/shim:$PATH" bash -c ". '$bdir/lib-paths.sh'; new_folder $which my-slug")"
+      p="$(pwsh -NoProfile -Command ". '$pdir/lib-paths.ps1'; New-Folder -Kind $which -Slug my-slug -At ([datetime]'2026-01-02T03:04:05Z')" 2>&1)"
+      p="${p%$'\r'}"
+      check "parity $which ($(basename "$bdir")): bash == pwsh" "$b" "$p"
+      if [[ "$p" =~ $re ]]; then
+        check "ps $which: stamp and slug" "$fixed" "${BASH_REMATCH[2]}"
+      else
+        check "ps $which: output shape" "match" "no match: $p"
+      fi
+    done
+  done
+  if pwsh -NoProfile -Command ". '$pssrc/lib-paths.ps1'; New-Folder -Kind bad -Slug s" >/dev/null 2>&1; then
+    check "ps bad kind fails" nonzero zero
+  else
+    check "ps bad kind fails" nonzero nonzero
+  fi
+else
+  echo "skip parity (pwsh not installed)"
+fi
+
 # AC3: no log setting; policy files unchanged
 check "paths.env has no log setting" 0 "$(grep -v '^[[:space:]]*#' "$src/paths.env" | grep -ci log)"
 base=""
