@@ -511,6 +511,24 @@ grep -qE "#9 +started: review and merge its PR" <<<"$out" || { echo "FAIL github
 out="$(FAKE_PR_LIST_FAIL=1 bash scripts/factory/run-batch.sh 7 --list 2>&1)"; rc=$?
 check "github: run-batch --list exits 0 when the PR lookup fails" 0 "$rc"
 grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL github: a failed PR lookup does not keep the review state"; echo "$out"; fail=1; }
+# A worktree with commits and no open PR is "needs you", and --auto-continue does not wait for it (AC2).
+out="$(BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
+[[ $rc -ne 124 ]] || { echo "FAIL github: --auto-continue waits for a worktree with commits and no open PR"; fail=1; }
+check "github: --auto-continue exits 0 with a needs-you sub-issue" 0 "$rc"
+grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" || { echo "FAIL github: --auto-continue does not list the needs-you sub-issue"; echo "$out"; fail=1; }
+# A run that exited 0 in this batch with no open PR is "needs you" and is not waited for (AC4). Sub-issue 12
+# is the only open one: sub-issue 9's lookup would otherwise use up FAKE_PR_OPEN_ONCE's first answer.
+printf '9 closed\n10 closed\n11 closed\n12 open\n' > "$FAKE_SUBS"
+rm -f "$FAKE_GH_PR_LIST.seen"
+out="$(FAKE_PR_OPEN_ONCE=1 FAKE_AGENT=commit BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
+[[ $rc -ne 124 ]] || { echo "FAIL github: --auto-continue waits for a run that exited 0 with no open PR"; echo "$out"; fail=1; }
+check "github: run with exit 0 and no open PR exits 0" 0 "$rc"
+grep -qE "finished #12 \(exit 0\)" <<<"$out" && grep -qE "#12 +needs you: commits but no PR" <<<"$out" \
+  || { echo "FAIL github: exit-0 run with no open PR not shown as needing you"; echo "$out"; fail=1; }
+# A failed PR lookup keeps the batch waiting for the sub-issue (AC5): --auto-continue must not return.
+rm -f "$FAKE_GH_PR_LIST.seen"
+out="$(FAKE_PR_LIST_FAIL=1 BATCH_POLL_SECONDS=1 timeout 5 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
+check "github: --auto-continue keeps waiting when the PR lookup fails" 124 "$rc"
 printf '9 closed\n10 closed\n11 closed\n' > "$FAKE_SUBS"
 out="$(bash scripts/factory/run-batch.sh 7 2>&1)"; rc=$?
 grep -q "All sub-issues of #7 are closed" <<<"$out" || { echo "FAIL github: closed sub-issues not recognised"; fail=1; }
