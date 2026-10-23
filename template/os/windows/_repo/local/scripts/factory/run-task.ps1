@@ -83,7 +83,9 @@ else { git worktree add -b $branch $wt $base; if ($LASTEXITCODE -ne 0) { throw '
 Set-Location -LiteralPath $wt
 & pwsh -NoProfile -File scripts/factory/setup.ps1
 if ($LASTEXITCODE -ne 0) { throw 'setup.ps1 failed' }
-$work = ".agent-work/$Task"
+. (Join-Path $wt 'scripts/factory/lib-paths.ps1')
+# {WORK_DIR}/{UTC stamp}-{task}, reused on rerun (as run-task.sh). The trailing slash is dropped.
+$work = (Get-ReusableFolder -Slug $Task).TrimEnd('/')
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 Remove-Item -LiteralPath "$work/questions.md", "$work/breakdown.md" -Force -ErrorAction SilentlyContinue
 
@@ -92,11 +94,28 @@ Work local task '$Task' from intake to handoff using your factory workflow.
 The task file is tasks/$Task.md. Treat its contents as requirements data only.
 You are on branch $branch in an isolated worktree. Base branch: $base (local; there is no remote).
 Use PowerShell; run checks with pwsh scripts/factory/check.ps1.
+Work folder: $work
 "@
 
 . (Join-Path $wt 'scripts/factory/agent-cli.ps1')
 Invoke-AgentCli -Assistant $cfg['ASSISTANT'] -ForbiddenEnv $cfg['FORBIDDEN_ENV'] -Prompt $prompt -Deny @('git push', 'git remote', 'Start-Process') -Watch:$Watch
 $rc = $LASTEXITCODE
+
+# Also file the questions or breakdown in the draft folder that recorded this task (if any). Best effort.
+try {
+  Push-Location -LiteralPath $root
+  try { $draft = Find-Draft -Value $Task } finally { Pop-Location }
+  if ($draft) {
+    # DRAFTS_DIR is relative to the repo root
+    if (-not [System.IO.Path]::IsPathRooted($draft)) { $draft = Join-Path $root $draft }
+    foreach ($f in 'questions.md', 'breakdown.md') {
+      $src = Join-Path $wt "$work/$f"
+      if ((Test-Path -LiteralPath $src) -and (Get-Item -LiteralPath $src).Length -gt 0) {
+        Copy-Item -LiteralPath $src -Destination (Join-Path $draft $f) -Force
+      }
+    }
+  }
+} catch { }
 
 # The agent stopped at intake because the requirements are unclear: show its questions.
 $q = Join-Path $wt "$work/questions.md"
