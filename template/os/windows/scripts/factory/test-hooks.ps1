@@ -114,6 +114,11 @@ try {
   if ($flat.Count -eq 0 -and -not (Test-Path '.agent-logs/test.jsonl')) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: no flat session .jsonl should exist directly under .agent-logs' }
   $stray = @(Get-ChildItem '.agent-logs' -Directory | ForEach-Object { Get-ChildItem $_.FullName -File -Filter 'index.jsonl' })
   if ($stray.Count -eq 0) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: index.jsonl must stay directly under .agent-logs' }
+  Invoke-Hook 'log.ps1' '{"sessionId":"test","source":"startup"}' @('sessionStart') | Out-Null
+  $idxOk = (Test-Path '.agent-logs/index.jsonl') -and ((Get-Item '.agent-logs/index.jsonl').Length -gt 0) -and @(Get-Content '.agent-logs/index.jsonl' | Where-Object { $_ } | ForEach-Object { try { $_ | ConvertFrom-Json | Out-Null; $true } catch { $false } }) -notcontains $false
+  if ($idxOk) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: sessionStart should write valid JSONL to .agent-logs/index.jsonl' }
+  $stray = @(Get-ChildItem '.agent-logs' -Directory | ForEach-Object { Get-ChildItem $_.FullName -File -Filter 'index.jsonl' })
+  if ($stray.Count -eq 0) { $global:pass++ } else { $global:fail++; Write-Output 'FAIL: index.jsonl must not be written inside a session folder' }
   foreach ($f in 'deny-paths.txt', 'deny-commands.txt') {
     if ((Get-FileHash ".github/hooks/policy/$f").Hash -eq (Get-FileHash (Join-Path $src ".github/hooks/policy/$f")).Hash) { $global:pass++ } else { $global:fail++; Write-Output "FAIL: $f differs from source" }
   }
