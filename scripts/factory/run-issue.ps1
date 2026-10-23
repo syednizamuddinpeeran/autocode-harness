@@ -8,7 +8,8 @@
 # it stops before planning and writes questions; this script shows them and can post them on the issue.
 # If the plan exceeds complexity.env, the agent proposes a breakdown instead of code (create-issues.ps1).
 # Exit codes: 0 done, 2 no issue given, 4 issue not ready, 5 agent needs answers, 6 breakdown proposed,
-# 7 work committed but not pushed (no open PR for the branch), other = CLI error.
+# 7 work committed but not pushed (no open PR for the branch), 8 the run produced no result (no commits,
+# no open PR, no questions, no breakdown), other = CLI error.
 param([string]$Issue, [switch]$Watch)
 $ErrorActionPreference = 'Stop'
 
@@ -59,7 +60,27 @@ $wt = Join-Path $wtRoot "issue-$Issue"
 
 git fetch origin $base --quiet
 if (Test-Path -LiteralPath $wt) { Write-Output "Reusing worktree $wt" }
-else { git worktree add -b $branch $wt "origin/$base"; if ($LASTEXITCODE -ne 0) { throw 'git worktree add failed' } }
+else {
+  git show-ref --verify --quiet "refs/heads/$branch"
+  if ($LASTEXITCODE -eq 0) {
+    # The branch is left over from an earlier run whose worktree was removed.
+    git worktree prune
+    $kept = [int]"$(git rev-list --count "origin/$base..$branch")"
+    if ($LASTEXITCODE -ne 0) { throw "git rev-list origin/$base..$branch failed" }
+    if ($kept -eq 0) {
+      Write-Output "Reusing branch $branch (no commits of its own): restarting it from origin/$base"
+      git worktree add -B $branch $wt "origin/$base"
+    } else {
+      # Never reset a branch that has work on it: attach the new worktree to it as it is.
+      Write-Output "Reusing branch $branch, keeping its $kept commit(s). To start over instead, delete it first:"
+      Write-Output "  git branch -D $branch"
+      git worktree add $wt $branch
+    }
+  } else {
+    git worktree add -b $branch $wt "origin/$base"
+  }
+  if ($LASTEXITCODE -ne 0) { throw 'git worktree add failed' }
+}
 Set-Location -LiteralPath $wt
 & pwsh -NoProfile -File scripts/factory/setup.ps1
 if ($LASTEXITCODE -ne 0) { throw 'setup.ps1 failed' }
@@ -128,6 +149,19 @@ if ($ahead -gt 0) {
     Write-Output '   run again to let the agent finish.'
     if ($rc -ne 0) { exit $rc }
     exit 7
+  }
+} else {
+  # Nothing came out of the run: no commits, no questions, no breakdown and no open PR. The agent
+  # stopped early or was cut off, so a person has to look.
+  $openPrs = ''
+  try { $openPrs = [string](gh pr list --head $curBranch --state open --json number --jq length 2>$null) } catch { }
+  if ($openPrs.Trim() -notmatch '^[1-9][0-9]*$') {
+    Write-Output ''
+    Write-Output "── Issue #${Issue}: the run produced no result: no commits on $curBranch, no open pull request, no"
+    Write-Output "   questions and no breakdown. Edits left uncommitted, if any, are in the worktree $wt."
+    Write-Output '   Check the run''s output for why the agent stopped, then run again.'
+    if ($rc -ne 0) { exit $rc }
+    exit 8
   }
 }
 exit $rc

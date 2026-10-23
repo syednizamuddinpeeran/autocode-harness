@@ -8,9 +8,10 @@
 # acceptance criteria, edge cases, out of scope, data/security, risk — and writes only what you
 # answer; anything you leave unanswered is marked OPEN. It never changes code or creates anything.
 #
-# Result: .agent-work/drafts/<id>.md. Review and edit it, then create it yourself:
-#   GitHub repos:  scripts/factory/create-issue.sh .agent-work/drafts/<id>.md
-#   Local repos:   scripts/factory/create-task.sh  .agent-work/drafts/<id>.md
+# Result: <DRAFTS_DIR>/<YYYY-MM-DDTHH-MM-SSZ>-<id>/draft.md (DRAFTS_DIR is set in paths.env; a rerun
+# with the same id reuses the folder). Review and edit it, then create it yourself:
+#   GitHub repos:  scripts/factory/create-issue.sh <that draft.md>
+#   Local repos:   scripts/factory/create-task.sh  <that draft.md>
 #
 # The session runs in a throwaway git worktree, so the agent cannot touch your checkout.
 set -euo pipefail
@@ -28,13 +29,23 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 # shellcheck disable=SC1091
 source scripts/factory/commands.env
+# shellcheck disable=SC1091
+source scripts/factory/lib-paths.sh
 base="${BASE_BRANCH:-main}"
 repo_name="$(basename "$root")"
 
 [[ -n "$id" ]] || id="$(tr '[:upper:]' '[:lower:]' <<<"$brief" | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-40 | sed -E 's/-+$//')"
 [[ "$id" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || { echo "draft id must be a lowercase slug: $id" >&2; exit 1; }
-out_dir="$root/.agent-work/drafts"
-out="$out_dir/$id.md"
+# Reuse the newest existing folder for this id; otherwise name a new one with the helper.
+new_dir="$(new_folder drafts "$id")"
+drafts_loc="$(dirname "${new_dir%/}")"
+[[ "$drafts_loc" == /* ]] || drafts_loc="$root/$drafts_loc"
+out_dir="${new_dir}"
+[[ "$out_dir" == /* ]] || out_dir="$root/$out_dir"
+for existing in "$drafts_loc"/????-??-??T??-??-??Z-"$id"; do
+  [[ -d "$existing" ]] && out_dir="$existing/"
+done
+out="${out_dir%/}/draft.md"
 mkdir -p "$out_dir"
 if [[ -e "$out" ]]; then
   echo "A draft already exists: $out — the analyst will continue from it."
