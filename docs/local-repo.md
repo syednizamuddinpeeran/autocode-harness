@@ -57,7 +57,7 @@ The task id must be a lowercase slug (`^[a-z0-9][a-z0-9._-]*$`). Re-running `run
 
 The factory never guesses requirements:
 - `run-task.sh` with no id explains how to write a task and lists the tasks committed on the base branch (exit 2).
-- It runs `scripts/factory/check-ready.sh` on the committed task first; a missing or placeholder Goal, Acceptance criteria, Out of scope or Risk stops it before any agent starts (exit 4).
+- It runs `scripts/factory/check-ready.sh` on the committed task first; a missing or placeholder Goal, Acceptance criteria, Out of scope or Risk stops it before any agent starts (exit 4). A Goal may contain `<…>` words such as "Ship <name> to <env>"; it counts as empty only if blank once unfilled `<…>` template text is removed (blank means ASCII space or tab only).
 - If the task is still unclear, the agent stops at intake and writes `questions.md` plus a NEEDS-INPUT handoff; `run-task.sh` prints the questions (exit 5). Answer them in `tasks/<id>.md`, commit on the base branch, and run again — if nothing was implemented yet, the worktree is recreated from the updated task.
 - If the plan exceeds `scripts/factory/complexity.env`, nothing is implemented: `run-task.sh` saves the proposed breakdown to `.agent-work/breakdowns/<id>.md` (exit 6). Review it, then `scripts/factory/create-tasks.sh .agent-work/breakdowns/<id>.md` commits `tasks/<id>.<n>.md`. Run them with `scripts/factory/run-batch.sh <id> [--auto-continue]`. See [breakdown.md](breakdown.md).
 

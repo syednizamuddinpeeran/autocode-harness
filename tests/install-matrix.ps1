@@ -55,6 +55,14 @@ foreach ($repo in (Get-ChildItem (Join-Path $root 'template/repo') -Directory).N
       & pwsh -NoProfile -File scripts/factory/check-ready.ps1 $fx.FullName | Out-Null
       if ($LASTEXITCODE -ne $want) { throw "check-ready.ps1 $($fx.Name): want $want, got $LASTEXITCODE" }
     }
+    $okGoal = & pwsh -NoProfile -File scripts/factory/check-ready.ps1 (Join-Path $root 'tests/fixtures/ready/ok-goal-angle.md')
+    if ($LASTEXITCODE -ne 0 -or (@($okGoal) -join "`n") -ne 'ready') { throw "check-ready.ps1 ok-goal-angle.md: want exit 0 and ready, got $LASTEXITCODE" }
+    $okUnicode = & pwsh -NoProfile -File scripts/factory/check-ready.ps1 (Join-Path $root 'tests/fixtures/ready/ok-goal-unicode.md')
+    if ($LASTEXITCODE -ne 0 -or (@($okUnicode) -join "`n") -ne 'ready') { throw "check-ready.ps1 ok-goal-unicode.md: want exit 0 and ready, got $LASTEXITCODE" }
+    $okIdeographic = & pwsh -NoProfile -File scripts/factory/check-ready.ps1 (Join-Path $root 'tests/fixtures/ready/ok-goal-ideographic-space.md')
+    if ($LASTEXITCODE -ne 0 -or (@($okIdeographic) -join "`n") -ne 'ready') { throw "check-ready.ps1 ok-goal-ideographic-space.md: want exit 0 and ready, got $LASTEXITCODE" }
+    $badGoal = @(& pwsh -NoProfile -File scripts/factory/check-ready.ps1 (Join-Path $root 'tests/fixtures/ready/bad-goal-placeholder.md'))
+    if ($LASTEXITCODE -ne 4 -or @($badGoal | Where-Object { $_ -like '  - *' }).Count -ne 1 -or -not ($badGoal | Where-Object { $_ -match 'Goal is empty' })) { throw "check-ready.ps1 bad-goal-placeholder.md: want exit 4 with only the Goal problem, got $LASTEXITCODE" }
     foreach ($d in Get-ChildItem (Join-Path $root 'tests/fixtures/complexity') -Directory) {
       $want = switch ($d.Name) { { $_ -in 'ok', 'high-risk-single', 'two-areas' } { 0 } 'no-estimate' { 4 } default { 6 } }
       & pwsh -NoProfile -File scripts/factory/check-complexity.ps1 (Join-Path $d.FullName 'plan.md') (Join-Path $d.FullName 'brief.md') | Out-Null

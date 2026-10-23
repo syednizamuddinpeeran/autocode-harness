@@ -46,6 +46,30 @@ run_one() {
       [[ $got -eq $want ]] || { echo "check-ready.ps1 $(basename "$fx"): want $want, got $got"; return 1; }
     fi
   done
+  # Goal with angle-bracket words: a filled Goal passes; an unfilled template Goal is the only problem reported.
+  local out ps_out
+  out="$(bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-angle.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-angle.md: want exit 0 and ready, got $got: $out"; return 1; }
+  out="$(LC_ALL=C bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-unicode.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-unicode.md (LC_ALL=C): want exit 0 and ready, got $got: $out"; return 1; }
+  out="$(LC_ALL=C.UTF-8 bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-unicode.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-unicode.md (LC_ALL=C.UTF-8): want exit 0 and ready, got $got: $out"; return 1; }
+  # A Goal line of U+3000 only is text (blank means ASCII space or tab only), so it is ready in every locale.
+  out="$(LC_ALL=C bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-ideographic-space.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-ideographic-space.md (LC_ALL=C): want exit 0 and ready, got $got: $out"; return 1; }
+  out="$(LC_ALL=C.UTF-8 bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/ok-goal-ideographic-space.md")"; got=$?
+  [[ $got -eq 0 && "$out" == ready ]] || { echo "check-ready ok-goal-ideographic-space.md (LC_ALL=C.UTF-8): want exit 0 and ready, got $got: $out"; return 1; }
+  out="$(bash scripts/factory/check-ready.sh "$root/tests/fixtures/ready/bad-goal-placeholder.md")"; got=$?
+  [[ $got -eq 4 && "$(grep -c '^  - ' <<<"$out")" -eq 1 ]] && grep -q 'Goal is empty' <<<"$out" \
+    || { echo "check-ready bad-goal-placeholder.md: want exit 4 with only the Goal problem, got $got: $out"; return 1; }
+  if [[ "$os" == windows ]] && command -v pwsh >/dev/null; then
+    for fx in ok-goal-angle bad-goal-placeholder; do
+      f="$root/tests/fixtures/ready/$fx.md"
+      out="$(bash scripts/factory/check-ready.sh "$f")"
+      ps_out="$(pwsh -NoProfile -File scripts/factory/check-ready.ps1 "$f")"
+      [[ "$out" == "$ps_out" ]] || { echo "check-ready.ps1 $fx.md: stdout differs from check-ready.sh"; echo "bash: $out"; echo "pwsh: $ps_out"; return 1; }
+    done
+  fi
   # Complexity and breakdown checks: expected exit codes per fixture.
   local d c
   for d in "$root"/tests/fixtures/complexity/*/; do
