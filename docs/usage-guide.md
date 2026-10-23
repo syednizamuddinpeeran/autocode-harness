@@ -101,6 +101,22 @@ Merge the PR on GitHub once CI is green and you have approved it. Agents never m
 git worktree remove ../<repo>-worktrees/issue-42 && git branch -d agent/issue-42-<slug>
 ```
 
+## Move files to the timestamped layout
+
+Repos set up before drafts, issue work and session logs moved to timestamped folders still have flat files. Those moves cannot be undone by git, and `.agent-work/` and `.agent-logs/` are gitignored, so copy both folders aside first. Then, with no agent session running (the bash hooks still write flat session logs), run:
+
+```bash
+bash scripts/factory/migrate-paths.sh
+```
+
+- Moves old flat drafts (`.agent-work/drafts/<id>.md` → `<DRAFTS_DIR>/<stamp>-<id>/draft.md`), old issue work (`.agent-work/issue-N/` → `<WORK_DIR>/<stamp>-issue-N/`) and old session logs (`.agent-logs/<session>.jsonl` → `.agent-logs/<stamp>-<session>/<session>.jsonl`).
+- If `DRAFTS_DIR` or `WORK_DIR` in `paths.env` changed since the last run, moves the stamped folders from the location recorded in `.agent-work/.layout` to the new one.
+- `<stamp>` is the item's modification time in UTC. Each move is printed as `from -> to`.
+- Refuses the whole run (exit 1, nothing moved) if a destination already exists, or if a new location is inside the old one. Nothing is overwritten.
+- Writes `.agent-work/.layout` only after all moves succeed, so a failed run is finished by running it again. `index.jsonl` and `batch/` stay where they are. A second run on a migrated tree moves nothing.
+- To roll back a run, reverse the printed `from -> to` lines and delete `.agent-work/.layout`.
+- There is no PowerShell version: on Windows run it from Git Bash or WSL.
+
 ## Logs
 
 - Local: each session is written to `.agent-logs/<YYYY-MM-DDTHH-MM-SSZ>-<session>/<session>.jsonl` (the timestamp is UTC); later events of the same session append to that file. `.agent-logs/index.jsonl` and `.agent-logs/.verified` stay directly under `.agent-logs/`. The location and the deny policy files in `.github/hooks/policy/` are unchanged.
