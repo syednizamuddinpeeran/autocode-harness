@@ -52,7 +52,7 @@ On the cloud agent all of these fire except that `preCompact` fires only for aut
 
 ## Policy files (`.github/hooks/policy/`)
 
-- `deny-commands.txt` — case-insensitive extended regexes against shell commands. They match the command with quoted text blanked (see the code view in [security-model.md](security-model.md)); quoted text that may run is matched as written.
+- `deny-commands.txt` — case-insensitive extended regexes against shell commands. For a command line made only of `git` and `gh` commands they match the command with quoted text blanked; any other command line is matched as written (see the code view in [security-model.md](security-model.md)).
 - `deny-paths.txt` — regexes against file paths; `write:` prefix = writes only.
 Lines starting with `#` are comments. Humans edit; agents cannot.
 

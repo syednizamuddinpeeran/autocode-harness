@@ -60,12 +60,28 @@ function ConvertTo-NetRegex([string]$Pattern) {
 # ---------- shell commands ----------
 # Words that run their arguments (or set up a program that does): quoted text after them is code.
 # Same list as guard.sh (exec_words).
-$ExecWords = '(^|[^A-Za-z0-9_])(bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|wsl|eval|exec|source|xargs|env|command|builtin|time|nohup|nice|timeout|watch|start|call|iex|invoke-expression|invoke-command|start-process|start-job|ssh|python[0-9.]*|perl|ruby|node|php|make|alias|editor|visual|pager|browser|git_[a-z_]*)'
+$ExecWords = '(^|[^A-Za-z0-9_])(bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|wsl|eval|exec|source|xargs|env|command|builtin|time|nohup|nice|timeout|watch|start|call|iex|invoke-expression|invoke-command|start-process|start-job|ssh|python[0-9.]*|perl|ruby|node|php|make|alias|editor|visual|pager|browser|foreach|run|-c|-x|git_[a-z_]*)'
+
+# Test-GitOrGhSegments <code view with line breaks>: $true when there is at least one command and
+# every command in it starts with git or gh. Commands are split at ; | & ( ) { } and line breaks;
+# a >& or &> redirection is not a split. Same rule as starts_git_or_gh in guard.sh.
+function Test-GitOrGhSegments([string]$Code) {
+  $found = $false
+  $t = ($Code -replace '>&', '>') -replace '&>', '>'
+  foreach ($line in ($t -split '[;|&(){}\r\n]')) {
+    $s = $line.Trim()
+    if ($s -eq '') { continue }
+    if ($s -notmatch '^(git|gh)(\s|$)') { return $false }
+    $found = $true
+  }
+  return $found
+}
 
 # Get-CodeView <command>: the text the deny patterns are matched against first. The rules of
 # code_view in guard.sh, with PowerShell escapes: a backtick escapes the next character, and a
-# quote in a row ("" or '') is a fallback. Returns View and Fallback (the caller then matches the
-# raw command too).
+# quote in a row ("" or '') is a fallback. The command keeps its line breaks, which end a command.
+# Returns View and Fallback (the caller then matches the raw command too). A command that does not
+# start with git or gh is a fallback, as is any word in $ExecWords.
 function Get-CodeView([string]$Command) {
   $sb = [System.Text.StringBuilder]::new()
   $fallback = $false
@@ -89,8 +105,10 @@ function Get-CodeView([string]$Command) {
     else { [void]$sb.Append($body) }
     $i = $j + 1
   }
-  $view = $sb.ToString()
+  $code = $sb.ToString()
+  $view = (($code -replace '[\r\n\t]', ' ') -replace ' {2,}', ' ')
   if ($view -match '[$`]|<<|@[''"]' -or $view -match $ExecWords) { $fallback = $true }
+  if (-not $fallback -and -not (Test-GitOrGhSegments $code)) { $fallback = $true }
   return @{ View = $view; Fallback = $fallback }
 }
 
@@ -101,7 +119,7 @@ function Test-Shell {
   }
   if (-not $cmd) { $cmd = $argsJson }
   $norm = ($cmd -replace '[\r\n\t]', ' ') -replace ' {2,}', ' '
-  $cv = Get-CodeView $norm
+  $cv = Get-CodeView ($cmd -replace '\r', '')
 
   foreach ($pat in Get-Patterns (Join-Path $policyDir 'deny-commands.txt')) {
     $rx = ConvertTo-NetRegex $pat

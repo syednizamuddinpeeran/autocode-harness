@@ -45,3 +45,13 @@ deny  sh   sudo in backticks        :: echo "`sudo ls`"
 deny  sh   sudo through eval        :: eval "sudo ls"
 deny  sh   sudo after open quote    :: echo "a' ; sudo ls
 deny  sh   quoted sudo command word :: "sudo" ls
+# Only a command line whose every command is git or gh is judged by its code view. A word that runs
+# quoted text (awk, su, sed, vim) or a line break or ; before another command keeps the raw text.
+allow sh   commit message with a line break :: git commit -m "fix: one\nsudo is human-only" && git status
+allow sh   two git lines                    :: git status\ngit log --oneline -1
+deny  sh   sudo in awk system()             :: awk 'BEGIN{system("sudo ls")}'
+deny  sh   sudo through su -c               :: su -c "sudo ls"
+deny  sh   sudo through sed 1e              :: sed '1e sudo ls' file
+deny  sh   sudo through vim -c              :: vim -es -c '!sudo ls' -c q
+deny  sh   sudo after a line break          :: git status\necho "x sudo ls"
+deny  sh   sudo after a semicolon           :: git status; echo "x sudo ls"

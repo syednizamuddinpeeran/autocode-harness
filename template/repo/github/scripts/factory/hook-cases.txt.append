@@ -47,6 +47,18 @@ deny  sh     gh issue create inside bash -c       :: bash -c "gh issue create --
 deny  sh     quoted gh command word               :: "gh" issue create --title x --body y
 deny  sh     gh issue create through a variable   :: X="gh issue create --title x --body y"; $X
 deny  sh     gh issue create piped to xargs       :: printf "gh issue create --title x" | xargs
+# A quoted denied command is still run when a word that runs its text (awk, su, sed, vim, git -c,
+# git submodule foreach, git rebase --exec) or a line break before a non-git command carries it.
+deny  sh     gh issue create in awk system        :: awk 'BEGIN{system("gh issue create --title x --body y")}'
+deny  sh     gh issue create through su -c        :: su -c "gh issue create --title x --body y"
+deny  sh     gh issue create through sed 1e       :: sed '1e gh issue create --title x --body y' file
+deny  sh     gh issue create through vim -c       :: vim -es -c '!gh issue create --title x --body y' -c q
+deny  sh     gh issue create in submodule foreach :: git submodule foreach 'gh issue create --title x --body y'
+deny  sh     gh issue create in rebase exec       :: git rebase --exec "gh issue create --title x --body y" HEAD
+deny  sh     gh issue create via git -c alias     :: git -c alias.x='!gh issue create --title x --body y' x
+deny  sh     gh issue create via git -c filter    :: git -c filter.x.clean='gh issue create --title x --body y' status
+deny  sh     gh issue create after a line break   :: git status\nfoo "gh issue create --title x --body y"
+deny  sh     gh issue create after a semicolon    :: git status; foo "gh issue create --title x --body y"
 @checkout main
 allow sh     commit on main says push   :: git commit -m "then git push origin HEAD"
 deny  sh     push from main with 2>&1   :: git push -u origin HEAD 2>&1

@@ -55,15 +55,34 @@ patterns() { [[ -f "$1" ]] && grep -Ev '^\s*(#|$)' "$1" || true; }
 
 # ---------- shell commands ----------
 # Words that run their arguments (or set up a program that does): quoted text after them is code.
-exec_words='(^|[^A-Za-z0-9_])(bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|wsl|eval|exec|source|xargs|env|command|builtin|time|nohup|nice|timeout|watch|start|call|iex|invoke-expression|invoke-command|start-process|start-job|ssh|python[0-9.]*|perl|ruby|node|php|make|alias|editor|visual|pager|browser|git_[a-z_]*)'
+# git -c, git submodule foreach, git bisect run and git rebase --exec run text too (--exec via exec).
+exec_words='(^|[^A-Za-z0-9_])(bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|wsl|eval|exec|source|xargs|env|command|builtin|time|nohup|nice|timeout|watch|start|call|iex|invoke-expression|invoke-command|start-process|start-job|ssh|python[0-9.]*|perl|ruby|node|php|make|alias|editor|visual|pager|browser|foreach|run|-c|-x|git_[a-z_]*)'
+
+# starts_git_or_gh <code view with line breaks>: true when there is at least one command and every
+# command in it starts with git or gh. Commands are split at ; | & ( ) { } and line breaks; a >& or
+# &> redirection is not a split.
+starts_git_or_gh() {
+  local t="$1" line found=0
+  t="${t//>&/>}"; t="${t//&>/>}"
+  t="$(sed -E 's/[;|&(){}]+/\n/g' <<<"$t")"
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^(git|gh)([[:space:]]|$) ]] || return 1
+    found=1
+  done <<<"$t"
+  (( found ))
+}
 
 # code_view <command>: sets view, the text the deny patterns are matched against first. Unquoted
 # text is kept as is. A quoted span with no $, backtick or backslash is data: it is blanked to ""
 # when it has whitespace (a commit message or PR title is not a command) and kept bare when it has
 # none ("gh" stays gh, so "gh" issue create is still seen). Any other quoted span is kept with its
-# quotes. Sets fallback=1 when the view cannot be trusted alone: an unterminated quote, two quotes
-# in a row, a $ or backtick or heredoc, or a word that runs its arguments (exec_words). The caller
-# then matches the raw command too. Bash dynamic scoping: view and fallback are the caller's locals.
+# quotes. The command is given with its line breaks, which end a command. Sets fallback=1 when the
+# view cannot be trusted alone: an unterminated quote, two quotes in a row, a $ or backtick or
+# heredoc, a word that runs its arguments (exec_words), or any command that does not start with git
+# or gh. The caller then matches the raw command too. Bash dynamic scoping: view and fallback are the
+# caller's locals.
 code_view() {
   local s="$1" n i j c q rest body out="" closed
   n=${#s}; i=0; fallback=0
@@ -96,17 +115,21 @@ code_view() {
     esac
     ((i=j+1))
   done
-  view="$out"
+  seg="$out"
+  view="${out//$'\n'/ }"; view="${view//$'\t'/ }"
+  while [[ "$view" == *'  '* ]]; do view="${view//  / }"; done
   if [[ "$view" == *'$'* || "$view" == *'`'* || "$view" == *'<<'* || "$view" == *"@'"* || "$view" == *'@"'* ]] \
      || grep -Eiq -- "$exec_words" <<<"$view"; then fallback=1; fi
+  # Only a command line whose every command is git or gh is judged by its code view alone.
+  (( fallback )) || starts_git_or_gh "$seg" || fallback=1
 }
 
 check_shell() {
-  local cmd norm pat view fallback
+  local cmd norm pat view seg fallback
   cmd="$(jq -r '.command // .cmd // .script // .input // .raw // empty' <<<"$args")"
   [[ -z "$cmd" ]] && cmd="$(jq -r 'tostring' <<<"$args")"
   norm="$(tr '\n\t' '  ' <<<"$cmd" | tr -s ' ')"
-  code_view "$norm"
+  code_view "$cmd"
 
   while IFS= read -r pat; do
     if grep -Eiq -- "$pat" <<<"$view" || { (( fallback )) && grep -Eiq -- "$pat" <<<"$norm"; }; then
