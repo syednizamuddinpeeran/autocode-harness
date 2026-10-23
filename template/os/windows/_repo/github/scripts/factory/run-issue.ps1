@@ -84,7 +84,8 @@ else {
 Set-Location -LiteralPath $wt
 & pwsh -NoProfile -File scripts/factory/setup.ps1
 if ($LASTEXITCODE -ne 0) { throw 'setup.ps1 failed' }
-$work = ".agent-work/issue-$Issue"
+. (Join-Path $wt 'scripts/factory/lib-paths.ps1')
+$work = (Get-ReusableFolder -Slug "issue-$Issue").TrimEnd('/')
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 Remove-Item -LiteralPath "$work/questions.md", "$work/breakdown.md" -Force -ErrorAction SilentlyContinue
 Set-Content -LiteralPath "$work/issue.json" -Value $json -Encoding utf8
@@ -98,6 +99,19 @@ You are on branch $branch in an isolated worktree. Base branch: $base. Use Power
 . (Join-Path $wt 'scripts/factory/agent-cli.ps1')
 Invoke-AgentCli -Assistant $cfg['ASSISTANT'] -ForbiddenEnv $cfg['FORBIDDEN_ENV'] -Prompt $prompt -Deny @('git push --force', 'gh pr merge', 'Start-Process') -Watch:$Watch
 $rc = $LASTEXITCODE
+
+# Also file the questions or breakdown in the draft folder that recorded this issue (if any). Best effort.
+Push-Location -LiteralPath $root
+try { $draft = [string](Find-Draft $Issue) } finally { Pop-Location }
+if ($draft) {
+  if (-not [System.IO.Path]::IsPathRooted($draft)) { $draft = Join-Path $root $draft }
+  foreach ($f in 'questions.md', 'breakdown.md') {
+    $src = Join-Path $wt "$work/$f"
+    if ((Test-Path -LiteralPath $src) -and (Get-Item -LiteralPath $src).Length -gt 0) {
+      try { Copy-Item -LiteralPath $src -Destination (Join-Path $draft $f) -Force -ErrorAction SilentlyContinue } catch { }
+    }
+  }
+}
 
 # The agent stopped at intake because the requirements are unclear: show its questions.
 $q = Join-Path $wt "$work/questions.md"
