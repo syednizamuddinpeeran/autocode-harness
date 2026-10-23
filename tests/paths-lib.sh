@@ -43,6 +43,22 @@ w="$(bash -c ". '$tmp/copy/lib-paths.sh'; new_folder work s")"
 check "override changes drafts" "elsewhere/drafts" "${d%/*????-??-??T??-??-??Z-s/}"
 check "override leaves work" ".agent-work" "${w%/*????-??-??T??-??-??Z-s/}"
 
+# reuse_folder: newest existing {stamp}-{slug} is reused, else a new stamped folder; follows WORK_DIR
+mkdir -p "$tmp/reuse" "$tmp/wk1" "$tmp/wk2"; cp "$src/paths.env" "$src/lib-paths.sh" "$tmp/reuse/"
+sed -i "s|^WORK_DIR=.*|WORK_DIR=$tmp/wk1|" "$tmp/reuse/paths.env"
+mkdir -p "$tmp/wk1/2026-01-01T00-00-00Z-slug" "$tmp/wk1/2026-02-01T00-00-00Z-slug" \
+  "$tmp/wk1/2026-03-01T00-00-00Z-x-slug" "$tmp/wk1/2026-04-01T00-00-00Z-other"
+reuse() { bash -c ". '$tmp/reuse/lib-paths.sh'; reuse_folder $1"; }
+check "reuse newest existing" "$tmp/wk1/2026-02-01T00-00-00Z-slug/" "$(reuse slug)"
+out="$(reuse fresh)"
+re2="^$tmp/wk1/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-fresh/\$"
+ok=no; [[ "$out" =~ $re2 ]] && ok=yes
+check "reuse: new stamped folder when none" yes "$ok"
+sed -i "s|^WORK_DIR=.*|WORK_DIR=$tmp/wk2|" "$tmp/reuse/paths.env"
+out="$(reuse slug)"
+ok=no; [[ "$out" == "$tmp/wk2/"*-slug/ ]] && ok=yes
+check "reuse follows changed WORK_DIR" yes "$ok"
+
 # Parity: the PowerShell helper gives the same result as bash for the same paths.env and a fixed UTC time
 if command -v pwsh >/dev/null 2>&1; then
   pssrc="$root/template/os/windows/scripts/factory"
