@@ -210,6 +210,21 @@ out="$(FAKE_AGENT=breakdown FAKE_BREAKDOWN="$tmp/bd-task.md" bash scripts/factor
 check "local: breakdown proposed exits 6" 6 "$rc"
 [[ -f .agent-work/breakdowns/t1.md && -f .agent-work/breakdowns/t1.brief.md ]] || { echo "FAIL local: breakdown not saved"; fail=1; }
 grep -q "create-tasks.sh" <<<"$out" || { echo "FAIL local: breakdown next step not shown"; fail=1; }
+# local: questions.md / breakdown.md are also filed in the draft folder that recorded the task
+shopt -s nullglob; none=(.agent-work/drafts/*/questions.md .agent-work/drafts/*/breakdown.md); shopt -u nullglob
+check "local: no recorded draft, nothing filed in any draft folder" 0 "${#none[@]}"
+ld=".agent-work/drafts/2026-01-02T03-04-08Z-t1"; mkdir -p "$ld" && printf 'task=t1\npath=tasks/t1.md\n' > "$ld/created.txt"
+out="$(FAKE_AGENT=questions bash scripts/factory/run-task.sh t1 2>&1)"; rc=$?
+check "local: questions run with a recorded draft exits 5" 5 "$rc"
+check "local: questions.md filed in the recorded draft folder" \
+  "1. Which columns are exported? — Why it matters: changes the CSV header." "$(cat "$ld/questions.md" 2>/dev/null)"
+[[ ! -e "$ld/breakdown.md" ]] || { echo "FAIL local: breakdown.md filed after a questions run"; fail=1; }
+rm -f "$ld/questions.md"
+out="$(FAKE_AGENT=breakdown FAKE_BREAKDOWN="$tmp/bd-task.md" bash scripts/factory/run-task.sh t1 2>&1)"; rc=$?
+check "local: breakdown run with a recorded draft exits 6" 6 "$rc"
+cmp -s "$tmp/bd-task.md" "$ld/breakdown.md" || { echo "FAIL local: breakdown.md not filed in the recorded draft folder"; fail=1; }
+[[ ! -e "$ld/questions.md" ]] || { echo "FAIL local: questions.md filed after a breakdown run"; fail=1; }
+rm -rf "$ld"
 bash scripts/factory/create-tasks.sh .agent-work/breakdowns/t1.md --yes >/dev/null; rc=$?
 check "local: create-tasks commits the sub-tasks" 0 "$rc"
 check "local: sub-tasks committed in one commit" "task: breakdown of t1 into 3 sub-tasks" "$(git log -1 --format=%s)"
@@ -272,6 +287,7 @@ check "github: agent questions exit 5" 5 "$rc"
 check "github: leftover branch without commits reused" "agent/issue-7-add-csv-export" \
   "$(git -C "$tmp/gh-worktrees/issue-7" branch --show-current 2>/dev/null)"
 grep -q "Which columns are exported" <<<"$out" || { echo "FAIL github: questions not shown"; fail=1; }
+[[ ! -e .agent-work/drafts ]] || { echo "FAIL github: drafts folder created with no recorded draft"; fail=1; }
 # The work folder is a UTC-stamped one, and every rerun reuses it.
 stamped_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z-issue-7$'
 wf=("$tmp"/gh-worktrees/issue-7/.agent-work/*Z-issue-7)
@@ -357,6 +373,20 @@ echo "$seq_before" > "$FAKE_GH_SEQ"
 out="$(FAKE_AGENT=breakdown FAKE_BREAKDOWN="$bd/ok.md" bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
 check "github: breakdown proposed exits 6" 6 "$rc"
 [[ -f .agent-work/breakdowns/issue-7.md && -f .agent-work/breakdowns/issue-7.brief.md ]] || { echo "FAIL github: breakdown not saved"; fail=1; }
+[[ ! -e .agent-work/drafts ]] || { echo "FAIL github: drafts folder created with no recorded draft"; fail=1; }
+# github: questions.md / breakdown.md are also filed in the draft folder that recorded the issue
+gd=".agent-work/drafts/2026-01-02T03-04-08Z-rec"; mkdir -p "$gd" && printf 'number=7\nurl=https://example.test/7\n' > "$gd/created.txt"
+out="$(FAKE_AGENT=questions bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
+check "github: questions run with a recorded draft exits 5" 5 "$rc"
+check "github: questions.md filed in the recorded draft folder" \
+  "1. Which columns are exported? — Why it matters: changes the CSV header." "$(cat "$gd/questions.md" 2>/dev/null)"
+[[ ! -e "$gd/breakdown.md" ]] || { echo "FAIL github: breakdown.md filed after a questions run"; fail=1; }
+rm -f "$gd/questions.md"
+out="$(FAKE_AGENT=breakdown FAKE_BREAKDOWN="$bd/ok.md" bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
+check "github: breakdown run with a recorded draft exits 6" 6 "$rc"
+cmp -s "$bd/ok.md" "$gd/breakdown.md" || { echo "FAIL github: breakdown.md not filed in the recorded draft folder"; fail=1; }
+[[ ! -e "$gd/questions.md" ]] || { echo "FAIL github: questions.md filed after a breakdown run"; fail=1; }
+rm -rf "$gd"
 rm -f "$FAKE_GH_API"
 out="$(bash scripts/factory/create-issues.sh .agent-work/breakdowns/issue-7.md --yes 2>&1)"; rc=$?
 check "github: create-issues creates the sub-issues" 0 "$rc"

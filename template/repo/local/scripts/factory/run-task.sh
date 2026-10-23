@@ -109,6 +109,15 @@ source scripts/factory/agent-cli.sh
 rc=0
 agent_cli "$mode" "$prompt" "git push" "git remote" "sudo" || rc=$?
 
+# Also file the questions or breakdown in the draft folder that recorded this task (if any). Best effort.
+draft="$(cd "$root" && find_draft "$task")" || draft=""
+[[ -z "$draft" || "$draft" == /* ]] || draft="$root/$draft"   # DRAFTS_DIR is relative to the repo root
+if [[ -n "$draft" ]]; then
+  for f in questions.md breakdown.md; do
+    if [[ -s "$work/$f" ]]; then cp "$work/$f" "$draft$f" || true; fi
+  done
+fi
+
 # The agent stopped at intake because the requirements are unclear: show its questions.
 if [[ -s "$work/questions.md" ]]; then
   echo
