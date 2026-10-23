@@ -34,4 +34,8 @@ git add "tasks/$Id.md"
 git commit -q -m "task: $Id" -- "tasks/$Id.md"
 if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
 Write-Output "Committed tasks/$Id.md on '$base'."
+# Record the result beside the draft, but only for a draft.md that new-draft made in its own folder.
+if ((Split-Path -Leaf $Draft) -eq 'draft.md') {
+  [System.IO.File]::WriteAllText((Join-Path (Split-Path -Parent $Draft) 'created.txt'), "task=$Id`npath=tasks/$Id.md`n")
+}
 Write-Output "Run it with:  pwsh scripts/factory/run-task.ps1 $Id"

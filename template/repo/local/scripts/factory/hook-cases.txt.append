@@ -22,4 +22,5 @@ allow sh   git -C agent worktree    :: git -C {worktree} commit -am x
 @worktree feature/wt-local
 deny  sh   commit in human worktree :: cd {worktree} && git commit -am x
 deny  sh   create task script     :: bash scripts/factory/create-task.sh .agent-work/drafts/x.md --yes
-deny  sh   create sub-tasks       :: bash scripts/factory/create-tasks.sh .agent-work/breakdowns/x.md --yes
+deny  sh   create task from draft folder :: bash scripts/factory/create-task.sh .agent-work/drafts/2026-01-02T03-04-05Z-x/draft.md --yes
+deny  sh   create sub-tasks      :: bash scripts/factory/create-tasks.sh .agent-work/breakdowns/x.md --yes

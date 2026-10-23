@@ -48,4 +48,8 @@ cp "$draft" "tasks/$id.md"
 git add "tasks/$id.md"
 git commit -q -m "task: $id" -- "tasks/$id.md"
 echo "Committed tasks/$id.md on '$base'."
+# Record the result beside the draft, but only for a draft.md that new-draft.sh made in its own folder.
+if [[ "$(basename "$draft")" == "draft.md" ]]; then
+  printf 'task=%s\npath=tasks/%s.md\n' "$id" "$id" > "$(dirname "$draft")/created.txt"
+fi
 echo "Run it with:  scripts/factory/run-task.sh $id"

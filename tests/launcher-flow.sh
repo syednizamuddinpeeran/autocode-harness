@@ -116,6 +116,23 @@ check "local: create-task commits a ready draft" 0 "$rc"
 check "local: task committed on base" "task: csv-export" "$(git log -1 --format=%s)"
 bash scripts/factory/create-task.sh .agent-work/drafts/csv-export.md --yes >/dev/null 2>&1; rc=$?
 check "local: create-task refuses to overwrite a task" 1 "$rc"
+
+# local: the created task's id and path are recorded in the draft's own folder
+[[ ! -e "$fx/created.txt" ]] || { echo "FAIL local: record written beside a draft not named draft.md"; fail=1; }
+rt="$tmp/drafts/2026-01-02T03-04-05Z-rec"; mkdir -p "$rt" && cp "$fx/ok-task.md" "$rt/draft.md"
+bash scripts/factory/create-task.sh "$rt/draft.md" --id t-rec --yes >/dev/null 2>&1; rc=$?
+check "local: create-task on a draft folder" 0 "$rc"
+[[ "$(cat "$rt/created.txt" 2>/dev/null)" == "$(printf 'task=t-rec\npath=tasks/t-rec.md')" ]] \
+  || { echo "FAIL local: created.txt missing or wrong:"; cat "$rt/created.txt" 2>&1; fail=1; }
+cmp -s "$rt/draft.md" "$fx/ok-task.md" || { echo "FAIL local: draft.md changed"; fail=1; }
+rt2="$tmp/drafts/2026-01-02T03-04-06Z-rec"; mkdir -p "$rt2" && cp "$fx/ok-task.md" "$rt2/draft.md"
+bash scripts/factory/create-task.sh "$rt2/draft.md" --id t-rec --yes >/dev/null 2>&1; rc=$?
+check "local: create-task refuses an existing task id" 1 "$rc"
+[[ ! -e "$rt2/created.txt" ]] || { echo "FAIL local: record written after a refusal"; fail=1; }
+rt3="$tmp/drafts/2026-01-02T03-04-07Z-rec"; mkdir -p "$rt3" && cp "$fx/bad-open-question.md" "$rt3/draft.md"
+bash scripts/factory/create-task.sh "$rt3/draft.md" --id t-rec3 --yes >/dev/null 2>&1; rc=$?
+check "local: create-task refuses a not-ready draft" 4 "$rc"
+[[ ! -e "$rt3/created.txt" ]] || { echo "FAIL local: record written for a not-ready draft"; fail=1; }
 bash scripts/factory/new-draft.sh "add csv export" </dev/null >/dev/null 2>&1; rc=$?
 check "local: new-draft needs a terminal" 2 "$rc"
 if command -v script >/dev/null; then
@@ -234,6 +251,22 @@ grep -qx "agent-draft" "$FAKE_GH_CREATE" && ! grep -qx "agent-ready" "$FAKE_GH_C
   || { echo "FAIL github: --draft must label agent-draft, not agent-ready"; fail=1; }
 grep -q "add the agent-ready label" <<<"$dout" || { echo "FAIL github: --draft review hint not shown"; fail=1; }
 grep -q "run-issue.sh 8" <<<"$out" || { echo "FAIL github: next step not shown"; fail=1; }
+
+# github: the created issue's number and URL are recorded in the draft's own folder
+[[ ! -e "$fx/created.txt" ]] || { echo "FAIL github: record written beside a draft not named draft.md"; fail=1; }
+seq_before="$(cat "$FAKE_GH_SEQ")"
+rd="$tmp/drafts/2026-01-02T03-04-05Z-rec"; mkdir -p "$rd" && cp "$fx/ok-task.md" "$rd/draft.md"
+bash scripts/factory/create-issue.sh "$rd/draft.md" --yes >/dev/null 2>&1; rc=$?
+check "github: create-issue on a draft folder" 0 "$rc"
+n=$((seq_before + 1))
+[[ "$(cat "$rd/created.txt" 2>/dev/null)" == "$(printf 'number=%s\nurl=https://example.test/issues/%s' "$n" "$n")" ]] \
+  || { echo "FAIL github: created.txt missing or wrong:"; cat "$rd/created.txt" 2>&1; fail=1; }
+cmp -s "$rd/draft.md" "$fx/ok-task.md" || { echo "FAIL github: draft.md changed"; fail=1; }
+rd2="$tmp/drafts/2026-01-02T03-04-06Z-rec"; mkdir -p "$rd2" && cp "$fx/ok-task.md" "$rd2/draft.md"
+bash scripts/factory/create-issue.sh --draft "$rd2/draft.md" </dev/null >/dev/null 2>&1; rc=$?
+check "github: create-issue --draft on a draft folder" 0 "$rc"
+grep -qx "number=$((n + 1))" "$rd2/created.txt" 2>/dev/null || { echo "FAIL github: --draft did not record the issue"; fail=1; }
+echo "$seq_before" > "$FAKE_GH_SEQ"
 
 # github: too big → breakdown → native sub-issues with blocked-by (human-only script)
 out="$(FAKE_AGENT=breakdown FAKE_BREAKDOWN="$bd/ok.md" bash scripts/factory/run-issue.sh 7 </dev/null 2>&1)"; rc=$?
