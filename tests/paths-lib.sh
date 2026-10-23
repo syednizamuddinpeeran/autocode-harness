@@ -105,6 +105,63 @@ SHIM
   else
     check "ps bad kind fails" nonzero nonzero
   fi
+
+  # Get-ReusableFolder and Find-Draft: same result as the bash reuse_folder and find_draft for the same paths.env
+  rf="$tmp/rf"; mkdir -p "$rf/wk1" "$rf/wk2" "$rf/dr"
+  cp "$src/paths.env" "$src/lib-paths.sh" "$pssrc/lib-paths.ps1" "$rf/"
+  sed -i "s|^WORK_DIR=.*|WORK_DIR=$rf/wk1|; s|^DRAFTS_DIR=.*|DRAFTS_DIR=$rf/dr|" "$rf/paths.env"
+  mkdir -p "$rf/wk1/2026-01-01T00-00-00Z-slug" "$rf/wk1/2026-02-01T00-00-00Z-slug" "$rf/wk1/2026-03-01T00-00-00Z-x-slug"
+  bash_reuse() { PATH="$tmp/shim:$PATH" bash -c ". '$rf/lib-paths.sh'; reuse_folder $1"; }
+  ps_run() { pwsh -NoProfile -Command ". '$rf/lib-paths.ps1'; $1" 2>&1; }
+
+  # AC1: newest existing folder is reused, decoy x-slug ignored, no folder created
+  b="$(bash_reuse slug)"
+  before="$(find "$rf/wk1" -mindepth 1 -maxdepth 1 | wc -l)"
+  p="$(ps_run 'Get-ReusableFolder -Slug slug')"; p="${p%$'\r'}"
+  after="$(find "$rf/wk1" -mindepth 1 -maxdepth 1 | wc -l)"
+  check "ps reuse newest: bash == pwsh" "$b" "$p"
+  check "ps reuse newest: 2026-02 folder" "$rf/wk1/2026-02-01T00-00-00Z-slug/" "$p"
+  check "ps reuse creates no folder" "$before" "$after"
+
+  # AC2: no match creates <stamp>-fresh under WORK_DIR and prints it (fixed time via the date shim for bash)
+  b="$(bash_reuse fresh)"
+  p="$(ps_run "Get-ReusableFolder -Slug fresh -At ([datetime]'2026-01-02T03:04:05Z')")"; p="${p%$'\r'}"
+  check "ps reuse fresh: bash == pwsh" "$b" "$p"
+  ok=no; [[ -d "${p%/}" ]] && ok=yes
+  check "ps reuse fresh folder exists" yes "$ok"
+
+  # AC3: WORK_DIR changed in paths.env is followed on the next call
+  mkdir -p "$rf/wk2/2026-05-01T00-00-00Z-slug"
+  sed -i "s|^WORK_DIR=.*|WORK_DIR=$rf/wk2|" "$rf/paths.env"
+  b="$(bash_reuse slug)"
+  p="$(ps_run 'Get-ReusableFolder -Slug slug')"; p="${p%$'\r'}"
+  check "ps reuse follows changed WORK_DIR: bash == pwsh" "$b" "$p"
+  check "ps reuse follows changed WORK_DIR: wk2 folder" "$rf/wk2/2026-05-01T00-00-00Z-slug/" "$p"
+  pwsh -NoProfile -Command ". '$rf/lib-paths.ps1'; Get-ReusableFolder -Slug ''" >/dev/null 2>&1; rc=$?
+  ok=zero; [[ "$rc" -ne 0 ]] && ok=nonzero
+  check "ps reuse empty slug fails" nonzero "$ok"
+
+  # AC4: Find-Draft matches whole number= / task= lines; prefix and no match print nothing
+  mkdir -p "$rf/dr/2026-01-01T00-00-00Z-a" "$rf/dr/2026-01-02T00-00-00Z-b" "$rf/dr/2026-01-03T00-00-00Z-c"
+  printf 'number=12\nurl=x\n' > "$rf/dr/2026-01-01T00-00-00Z-a/created.txt"
+  printf 'task=T-5\n' > "$rf/dr/2026-01-02T00-00-00Z-b/created.txt"
+  draft() { bash -c ". '$rf/lib-paths.sh'; find_draft $1"; }
+  for v in 12 T-5 1 99; do
+    b="$(draft "$v")"
+    p="$(ps_run "Find-Draft -Value '$v'")"; p="${p%$'\r'}"
+    check "ps find_draft $v: bash == pwsh" "$b" "$p"
+  done
+  check "ps find_draft number: a folder" "$rf/dr/2026-01-01T00-00-00Z-a/" "$(ps_run "Find-Draft -Value '12'")"
+  check "ps find_draft task: b folder" "$rf/dr/2026-01-02T00-00-00Z-b/" "$(ps_run "Find-Draft -Value 'T-5'")"
+  check "ps find_draft prefix prints nothing" "" "$(ps_run "Find-Draft -Value '1'")"
+
+  # AC4: missing DRAFTS_DIR prints nothing and the pwsh process exits 0
+  sed -i "s|^DRAFTS_DIR=.*|DRAFTS_DIR=$rf/nodrafts|" "$rf/paths.env"
+  b="$(draft 12)"
+  p="$(ps_run "Find-Draft -Value '12'")"; p="${p%$'\r'}"
+  check "ps find_draft missing dir: bash == pwsh" "$b" "$p"
+  pwsh -NoProfile -Command ". '$rf/lib-paths.ps1'; Find-Draft -Value '12'" >/dev/null 2>&1
+  check "ps find_draft missing dir exits 0" 0 "$?"
 else
   echo "skip parity (pwsh not installed)"
 fi
