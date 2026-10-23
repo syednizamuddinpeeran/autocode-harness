@@ -10,6 +10,8 @@
 #   - claude-code: the autonomous run lifts the background-task time limit
 #   - local: an edited task restarts a worktree that has no commits yet
 #   - agent proposes a breakdown → exit 6, saved; create-tasks / create-issues create the sub-items
+#   - pwsh (run-issue.ps1, when pwsh is installed): stamped work folder reused, WORK_DIR followed, and
+#     questions.md / breakdown.md filed in the recorded draft folder as in bash
 #   - windows (pwsh, skipped without pwsh): run-task.ps1 uses the stamped work folder, names it in the prompt,
 #     and files questions / breakdown in the recorded draft folder
 set -uo pipefail
@@ -498,6 +500,72 @@ grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL github: a worktree with
 printf '9 closed\n10 closed\n11 closed\n' > "$FAKE_SUBS"
 out="$(bash scripts/factory/run-batch.sh 7 2>&1)"; rc=$?
 grep -q "All sub-issues of #7 are closed" <<<"$out" || { echo "FAIL github: closed sub-issues not recognised"; fail=1; }
+
+# ---- github repo, Windows launcher (run-issue.ps1, needs pwsh) ----
+if command -v pwsh >/dev/null; then
+  shopt -s nullglob
+  ps="$tmp/ps"; psw="$tmp/ps-worktrees/issue-7"
+  mkdir -p "$ps" && cd "$ps" || exit 1
+  git init -q -b main . && git config user.email t@t && git config user.name t
+  echo x > README.md && git add -A && git commit -qm init
+  bash "$root/install.sh" . --repo github --os windows >/dev/null
+  sed -i 's/^ALLOW_NO_CHECKS=0/ALLOW_NO_CHECKS=1/' scripts/factory/commands.env
+  git add -A && git commit -qm factory
+  git init -q --bare "$tmp/ps-origin.git" && git remote add origin "$tmp/ps-origin.git" && git push -q origin main 2>/dev/null
+  export FAKE_ISSUE_BODY="$fx/ok-issue-form.md"
+  unset FAKE_PR_OPEN
+  # The work folder is a UTC-stamped one, and a rerun reuses it.
+  out="$(pwsh -NoProfile -File scripts/factory/run-issue.ps1 7 </dev/null 2>&1)"; rc=$?
+  check "ps: run with no result exits 8" 8 "$rc"
+  grep -q "produced no result" <<<"$out" || { echo "FAIL ps: empty run not reported"; echo "$out"; fail=1; }
+  wf=("$psw"/.agent-work/*Z-issue-7)
+  check "ps: one stamped work folder" 1 "${#wf[@]}"
+  [[ "$(basename "${wf[0]}")" =~ $stamped_re ]] || { echo "FAIL ps: work folder name not stamped: ${wf[0]}"; fail=1; }
+  [[ -f "${wf[0]}/issue.json" ]] || { echo "FAIL ps: issue.json not in the stamped folder"; fail=1; }
+  pwsh -NoProfile -File scripts/factory/run-issue.ps1 7 </dev/null >/dev/null 2>&1; rc=$?
+  wf2=("$psw"/.agent-work/*Z-issue-7)
+  check "ps: rerun exits 8 again" 8 "$rc"
+  check "ps: rerun reuses the stamped folder" "${wf[0]}" "${wf2[0]}"
+  check "ps: rerun leaves one stamped folder" 1 "${#wf2[@]}"
+
+  # A changed WORK_DIR in the paths file is picked up by the next run.
+  pf="$psw/scripts/factory/paths.env"; orig_paths="$(<"$pf")"
+  sed -i 's|^WORK_DIR=.*|WORK_DIR=elsewhere/work|' "$pf"
+  FAKE_PR_OPEN=1 pwsh -NoProfile -File scripts/factory/run-issue.ps1 7 </dev/null >/dev/null 2>&1; rc=$?
+  check "ps: run with a changed WORK_DIR exits 0" 0 "$rc"
+  nw=("$psw"/elsewhere/work/*Z-issue-7)
+  check "ps: changed WORK_DIR used" 1 "${#nw[@]}"
+  [[ -f "${nw[0]}/issue.json" ]] || { echo "FAIL ps: changed WORK_DIR not used"; fail=1; }
+  wf3=("$psw"/.agent-work/*Z-issue-7)
+  check "ps: nothing new under the old location" 1 "${#wf3[@]}"
+  printf '%s\n' "$orig_paths" > "$pf"; rm -rf "$psw/elsewhere"
+
+  # Filing: a run with no recorded draft files nothing and creates no drafts folder.
+  FAKE_AGENT=questions pwsh -NoProfile -File scripts/factory/run-issue.ps1 7 </dev/null >/dev/null 2>&1; rc=$?
+  check "ps: no recorded draft, questions run exits 5" 5 "$rc"
+  [[ -f "${wf3[0]}/questions.md" ]] || { echo "FAIL ps: questions.md not in the work folder"; fail=1; }
+  none=("$ps"/.agent-work/drafts/*/questions.md "$ps"/.agent-work/drafts/*/breakdown.md)
+  check "ps: no recorded draft, nothing filed" 0 "${#none[@]}"
+  [[ ! -e "$ps/.agent-work/drafts" ]] || { echo "FAIL ps: no .agent-work/drafts folder created"; fail=1; }
+
+  # A questions run files questions.md in the recorded draft folder, and not breakdown.md.
+  ld="$ps/.agent-work/drafts/2026-01-02T03-04-08Z-rec"; mkdir -p "$ld" && printf 'number=7\nurl=https://example.test/7\n' > "$ld/created.txt"
+  FAKE_AGENT=questions pwsh -NoProfile -File scripts/factory/run-issue.ps1 7 </dev/null >/dev/null 2>&1; rc=$?
+  check "ps: questions run with a recorded draft exits 5" 5 "$rc"
+  check "ps: questions.md filed in the recorded draft folder" \
+    "1. Which columns are exported? — Why it matters: changes the CSV header." "$(cat "$ld/questions.md" 2>/dev/null)"
+  [[ ! -e "$ld/breakdown.md" ]] || { echo "FAIL ps: breakdown.md filed after a questions run"; fail=1; }
+  rm -f "$ld/questions.md"
+
+  # A breakdown run files breakdown.md in the recorded draft folder, and not questions.md.
+  FAKE_AGENT=breakdown FAKE_BREAKDOWN="$bd/ok.md" pwsh -NoProfile -File scripts/factory/run-issue.ps1 7 </dev/null >/dev/null 2>&1; rc=$?
+  check "ps: breakdown run with a recorded draft exits 6" 6 "$rc"
+  cmp -s "$bd/ok.md" "$ld/breakdown.md" || { echo "FAIL ps: breakdown.md not filed in the recorded draft folder"; fail=1; }
+  [[ ! -e "$ld/questions.md" ]] || { echo "FAIL ps: questions.md filed after a breakdown run"; fail=1; }
+  shopt -u nullglob
+else
+  echo "skip ps launcher flow (pwsh not installed)"
+fi
 
 [[ $fail -eq 0 ]] && echo "launcher flow: all passed"
 exit $fail
