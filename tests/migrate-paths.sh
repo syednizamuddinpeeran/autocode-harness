@@ -4,7 +4,9 @@
 #   (b) a pre-existing destination refuses the run: tree byte-identical, nothing overwritten, no .layout
 #   (c) a changed DRAFTS_DIR / WORK_DIR in paths.env moves stamped folders from the recorded location;
 #       a new location inside the old one is refused with nothing moved
-#   (d) a second run on a migrated tree exits 0, moves nothing and leaves .agent-work/.layout unchanged
+#   (d) a second run on a migrated tree exits 0, moves nothing and leaves the tree unchanged;
+#       a default run removes a stale .layout left by a non-default run
+#   (e) a default paths.env with no old layout creates no .agent-work/ (or .agent-logs/)
 # Linux only: uses GNU touch -d @EPOCH, date -d and stat -c.
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -63,7 +65,7 @@ check "a: stamped draft untouched" beta "$(cat "$a/.agent-work/drafts/$S2-beta/d
 check "a: output lists draft move" yes "$(grep -qF -- ".agent-work/drafts/alpha.md -> .agent-work/drafts/$S1-alpha/draft.md" <<<"$out" && echo yes || echo no)"
 check "a: output lists issue move" yes "$(grep -qF -- ".agent-work/issue-7 -> .agent-work/$S1-issue-7" <<<"$out" && echo yes || echo no)"
 check "a: output lists session move" yes "$(grep -qF -- ".agent-logs/sess1.jsonl -> .agent-logs/$S1-sess1/sess1.jsonl" <<<"$out" && echo yes || echo no)"
-check "a: layout records the applied locations" "$(printf 'DRAFTS_DIR=.agent-work/drafts\nWORK_DIR=.agent-work')" "$(cat "$a/.agent-work/.layout")"
+check "a: default run writes no .layout" no "$(yn test -e "$a/.agent-work/.layout")"
 
 # (d) rerun on the migrated tree changes nothing
 m_a="$(manifest "$a")"
@@ -71,6 +73,12 @@ out="$(run "$a")"; rc=$?
 check "d: rerun exit 0" 0 "$rc"
 check "d: rerun changes nothing" "$m_a" "$(manifest "$a")"
 check "d: rerun prints no moves" 0 "$(grep -c -- ' -> ' <<<"$out")"
+check "d: rerun creates no .layout" no "$(yn test -e "$a/.agent-work/.layout")"
+# a stale .layout from an earlier non-default run is removed by a default run
+printf 'DRAFTS_DIR=elsewhere/drafts\nWORK_DIR=.agent-work\n' > "$a/.agent-work/.layout"
+run "$a" >/dev/null; rc=$?
+check "d: default run with stale .layout exit 0" 0 "$rc"
+check "d: default run removes stale .layout" no "$(yn test -e "$a/.agent-work/.layout")"
 
 # (b) a pre-existing destination refuses the whole run
 b="$(new_repo b)"
@@ -103,5 +111,13 @@ m_c="$(manifest "$c")"
 run "$c" >/dev/null; rc=$?
 check "c: nested new location refused" yes "$([[ $rc -ne 0 ]] && echo yes || echo no)"
 check "c: nested refusal moves nothing" "$m_c" "$(manifest "$c")"
+
+# (e) default paths.env and no old layout: a run creates no .agent-work/ at all
+e="$tmp/e"
+mkdir -p "$e/scripts" && git -C "$e" init -q -b main && cp -r "$src" "$e/scripts/factory"
+run "$e" >/dev/null; rc=$?
+check "e: exit 0" 0 "$rc"
+check "e: no .agent-work created" no "$(yn test -e "$e/.agent-work")"
+check "e: no .agent-logs created" no "$(yn test -e "$e/.agent-logs")"
 
 exit "$fail"
