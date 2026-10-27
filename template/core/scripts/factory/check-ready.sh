@@ -23,11 +23,12 @@ file="${1:?usage: check-ready.sh <file.md>}"
 # which keeps the verdict the same in every locale and in PowerShell.
 section() {
   awk -v name="$1" '
+    { sub(/\r$/, "") }
     /^###?[ \t]+/ { h = $0; sub(/^#+[ \t]+/, "", h); sub(/[ \t]+$/, "", h); on = (tolower(h) == tolower(name)); next }
     on { print }
   ' "$file" | sed -E 's/<!--.*-->//g' | {
     if [[ "${2:-}" == goal ]]; then
-      sed -E 's/<[^>]+>//g' | grep -E '[^ 	]' | grep -Ev '^[[:space:]]*_No response_[[:space:]]*$'
+      sed -E 's/<[^>]+>//g' | grep -E '[^ 	]' | grep -Ev '^[ 	]*_No response_[ 	]*$'
     else
       grep -Ev '<[^>]+>|^[[:space:]]*_No response_[[:space:]]*$|^[[:space:]]*$'
     fi

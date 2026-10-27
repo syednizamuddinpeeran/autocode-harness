@@ -19,7 +19,7 @@ function Get-Section([string]$Name, [switch]$KeepAngleLines) {
     $t = $l -replace '<!--.*-->', ''
     if ($KeepAngleLines) {
       $t = $t -replace '<[^>]+>', ''
-      if ($t -match '[^ \t]' -and $t -notmatch '^\s*_No response_\s*$') { $t }
+      if ($t -match '[^ \t]' -and $t -notmatch '^[ \t]*_No response_[ \t]*$') { $t }
       continue
     }
     if ($t -match '<[^>]+>' -or $t -match '^\s*_No response_\s*$' -or $t -match '^\s*$') { continue }
