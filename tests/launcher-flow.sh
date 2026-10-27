@@ -69,7 +69,15 @@ elif [[ "$1 $2" == "issue comment" ]]; then
 elif [[ "$1 $2" == "pr list" ]]; then
   # open PRs for --head <branch>: FAKE_PR_OPEN=1 reports one (as `--jq length` would print it)
   printf '%s\n' "$@" > "$FAKE_GH_PR_LIST"
-  [[ -n "${FAKE_PR_OPEN:-}" ]] && echo 1 || echo 0
+  # FAKE_PR_LIST_FAIL=1: the lookup fails (no output, exit 1), as on an API error or no network.
+  [[ -n "${FAKE_PR_LIST_FAIL:-}" ]] && exit 1
+  # FAKE_PR_OPEN_ONCE=1: the first lookup (run-issue's) finds the PR, later ones (the batch's) find none.
+  if [[ -n "${FAKE_PR_OPEN_ONCE:-}" ]]; then
+    seen="$(cat "$FAKE_GH_PR_LIST.seen" 2>/dev/null || echo 0)"; echo $(( seen + 1 )) > "$FAKE_GH_PR_LIST.seen"
+    [[ "$seen" == 0 ]] && echo 1 || echo 0
+  else
+    [[ -n "${FAKE_PR_OPEN:-}" ]] && echo 1 || echo 0
+  fi
 elif [[ "$1 $2" == "pr view" ]]; then
   jq -n --arg b "$(cat "$FAKE_PR_BODY")" --arg h "$FAKE_PR_HEAD" '{body: $b, headRefName: $h, author: {login: "Copilot"}, url: "https://example.test/pull/9"}'
 elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL_ON:-}* \
@@ -77,12 +85,14 @@ elif [[ "$1" == api && -n "${FAKE_GH_API_FAIL:-}" && "$2" == *${FAKE_GH_API_FAIL
   # Simulated network failure: the next <count in $FAKE_GH_API_FAIL> matching api calls fail.
   echo $(( $(cat "$FAKE_GH_API_FAIL") - 1 )) > "$FAKE_GH_API_FAIL"
   echo "Get \"https://api.github.com/$2\": dial tcp: i/o timeout" >&2; exit 1
-elif [[ "$1" == api && "$2" == repos/*/pulls* ]]; then
-  # open PRs: their head branch names, one per line (FAKE_OPEN_PR_HEADS), as the --jq output prints them
-  [[ -n "${FAKE_OPEN_PR_HEADS:-}" ]] && printf '%s\n' "$FAKE_OPEN_PR_HEADS"
+elif [[ "$1" == api && -n "${FAKE_GH_POST_FAIL:-}" && "$*" == *"-X POST"* && "$*" == *"$FAKE_GH_POST_FAIL"* ]]; then
+  # Simulated rejected POST to a matching path: the attempt is recorded, then it fails.
+  echo "${*:2}" >> "$FAKE_GH_API"
+  echo "HTTP 422: Validation Failed" >&2; exit 1
 elif [[ "$1" == api && "$2" == */sub_issues ]]; then
   cat "$FAKE_SUBS"          # already in the --jq output form: "<number> <state>"
 elif [[ "$1" == api && "$2" == */dependencies/blocked_by ]]; then
+  [[ -n "${FAKE_GH_BLOCKED_READS:-}" ]] && echo "$2" >> "$FAKE_GH_BLOCKED_READS"   # GET paths read by run-batch
   n="${2%/dependencies/blocked_by}"; cat "$FAKE_BLOCKED.${n##*/}" 2>/dev/null || true   # "#<number>" of open blockers
 elif [[ "$1" == api ]]; then
   echo "${*:2}" >> "$FAKE_GH_API"
@@ -452,13 +462,27 @@ check "github: create-issues creates the sub-issues" 0 "$rc"
 grep -q "could not" <<<"$out" && { echo "FAIL github: create-issues reported a failed link"; fail=1; }
 # Issues 9, 10, 11 (ids 1009..1011): all sub-issues of #7; 10 blocked by 9; 11 blocked by 9 and 10.
 for want in "issues/7/sub_issues -F sub_issue_id=1009" "issues/7/sub_issues -F sub_issue_id=1010" "issues/7/sub_issues -F sub_issue_id=1011" \
-            "issues/10/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1010"; do
+            "issues/10/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1009" "issues/11/dependencies/blocked_by -F issue_id=1010" \
+            "issues/7/dependencies/blocked_by -F issue_id=1009" "issues/7/dependencies/blocked_by -F issue_id=1010" "issues/7/dependencies/blocked_by -F issue_id=1011"; do
   grep -q -- "$want" "$FAKE_GH_API" || { echo "FAIL github: missing gh api call: $want"; fail=1; }
 done
 grep -qx "Depends on: #9, #10" "$FAKE_GH_CREATE.body.11" || { echo "FAIL github: sub-issue dependencies not rewritten"; fail=1; }
 grep -qx "agent-ready" "$FAKE_GH_CREATE" && { echo "FAIL github: blocked sub-issue got the agent-ready label"; fail=1; }
 grep -qx "Parent: #7" "$FAKE_GH_CREATE.body.9" || { echo "FAIL github: sub-issue parent missing"; fail=1; }
 grep -qx "7" "$FAKE_GH_COMMENT" || { echo "FAIL github: summary not commented on the parent"; fail=1; }
+# github: a rejected parent blocked-by call is a warning naming both issues; creation carries on
+seq_before="$(cat "$FAKE_GH_SEQ")"; echo 8 > "$FAKE_GH_SEQ"
+out="$(FAKE_GH_POST_FAIL=issues/7/dependencies/blocked_by bash scripts/factory/create-issues.sh .agent-work/breakdowns/issue-7.md --yes 2>&1)"; rc=$?
+check "github: create-issues survives a rejected parent blocked-by call" 0 "$rc"
+grep -q "could not record parent #7 as blocked by #9" <<<"$out" || { echo "FAIL github: no warning naming parent #7 and #9"; echo "$out"; fail=1; }
+grep -q "Created #11:" <<<"$out" || { echo "FAIL github: creation stopped after a rejected parent blocked-by call"; echo "$out"; fail=1; }
+echo "$seq_before" > "$FAKE_GH_SEQ"
+# github: the PowerShell twin records the same parent blocked-by call and warning (static check; pwsh not needed)
+ps1="$root/template/os/windows/_repo/github/scripts/factory/create-issues.ps1"
+grep -qF 'issues/$Parent/dependencies/blocked_by" -F "issue_id=$($id[[int]$i])"' "$ps1" \
+  || { echo "FAIL windows: create-issues.ps1 does not record the parent as blocked by each sub-issue"; fail=1; }
+grep -qF 'could not record parent #$Parent as blocked by #$($num[[int]$i])' "$ps1" \
+  || { echo "FAIL windows: create-issues.ps1 parent blocked-by warning missing or differs from create-issues.sh"; fail=1; }
 export FAKE_PR_BODY="$bd/ok.md" FAKE_PR_HEAD="feature/x"
 bash scripts/factory/create-issues.sh --from-pr 9 --yes >/dev/null 2>&1; rc=$?
 check "github: create-issues --from-pr refuses a non-agent branch" 1 "$rc"
@@ -467,9 +491,20 @@ check "github: create-issues refuses an invalid breakdown" 4 "$rc"
 
 # github: run the sub-issues whose blockers are closed (run-batch)
 export FAKE_SUBS="$tmp/subs" FAKE_BLOCKED="$tmp/blocked" FAKE_ISSUE_BODY="$fx/ok-issue-form.md"
+export FAKE_GH_BLOCKED_READS="$tmp/gh-blocked-reads"
 printf '9 open\n10 open\n11 open\n' > "$FAKE_SUBS"; echo "#9" > "$FAKE_BLOCKED.10"; printf '#9\n#10\n' > "$FAKE_BLOCKED.11"
+rm -f "$FAKE_GH_BLOCKED_READS"
 out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
 grep -qE "#9 +ready" <<<"$out" && grep -qE "#11 +blocked by: #9 #10" <<<"$out" || { echo "FAIL github: run-batch --list states wrong"; echo "$out"; fail=1; }
+# AC5: run-batch reads each sub-issue's blockers and never the parent's; the --list lines are unchanged.
+grep -qE "#10 +blocked by: #9 *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #10 changed"; echo "$out"; fail=1; }
+grep -qE "#9 +ready *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #9 changed"; echo "$out"; fail=1; }
+grep -qE "#11 +blocked by: #9 #10 *$" <<<"$out" || { echo "FAIL github: run-batch --list line for #11 changed"; echo "$out"; fail=1; }
+for want in issues/9/dependencies/blocked_by issues/10/dependencies/blocked_by issues/11/dependencies/blocked_by; do
+  grep -qF "$want" "$FAKE_GH_BLOCKED_READS" 2>/dev/null || { echo "FAIL github: run-batch did not read $want"; fail=1; }
+done
+! grep -qE "issues/7/dependencies/blocked_by" "$FAKE_GH_BLOCKED_READS" 2>/dev/null \
+  || { echo "FAIL github: run-batch read the parent's blockers (issues/7/dependencies/blocked_by)"; fail=1; }
 # A failing GitHub API call is retried; one that succeeds on retry keeps the batch going.
 export BATCH_GH_RETRY_SECONDS=0
 echo 2 > "$tmp/gh-fail"
@@ -498,26 +533,32 @@ grep -qE "#9 +needs you" <<<"$out" || { echo "FAIL github: a worktree without co
 BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue >/dev/null 2>&1; rc=$?
 [[ $rc -ne 124 ]] || { echo "FAIL github: run-batch --auto-continue waits for a stopped sub-issue"; fail=1; }
 (cd "$tmp/gh-worktrees/issue-9" && echo w > work.txt && git add work.txt && git commit -qm "feat: work")
-br9="$(git -C "$tmp/gh-worktrees/issue-9" branch --show-current)"
-# Commits but no open PR for the branch: needs you, and the batch does not wait for it.
 out="$(bash scripts/factory/run-batch.sh 7 --list 2>&1)"
-grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" && ! grep -qE "#9 +started: review" <<<"$out" \
-  || { echo "FAIL github: a worktree with commits and no PR is not shown as needing you"; echo "$out"; fail=1; }
-BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue >/dev/null 2>&1; rc=$?
-[[ $rc -ne 124 ]] || { echo "FAIL github: run-batch --auto-continue waits for a commits-but-no-PR sub-issue"; fail=1; }
-# An open PR for the branch: still awaiting review.
-out="$(FAKE_OPEN_PR_HEADS="$br9" bash scripts/factory/run-batch.sh 7 --list 2>&1)"
+grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" || { echo "FAIL github: a worktree with commits and no open PR is not shown as needing you"; echo "$out"; fail=1; }
+grep -qE "#9 +started: review" <<<"$out" && { echo "FAIL github: a worktree with commits and no open PR is still shown as awaiting review"; fail=1; }
+out="$(FAKE_PR_OPEN=1 bash scripts/factory/run-batch.sh 7 --list 2>&1)"
 grep -qE "#9 +started: review and merge its PR" <<<"$out" || { echo "FAIL github: a worktree with commits and an open PR is not shown as awaiting review"; echo "$out"; fail=1; }
-# The open-PR lookup fails: the sub-issue keeps "started: review" and the batch still exits 0 for --list.
-echo 99 > "$tmp/gh-fail-pulls"
-out="$(FAKE_GH_API_FAIL="$tmp/gh-fail-pulls" FAKE_GH_API_FAIL_ON=pulls bash scripts/factory/run-batch.sh 7 --list 2>&1)"; rc=$?
-check "github: run-batch --list exits 0 when the open-PR lookup fails" 0 "$rc"
-grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL github: a failed open-PR lookup does not keep started: review"; echo "$out"; fail=1; }
-# A run that finishes with exit 0 in this batch, with no open PR for its branch: needs you, not waited for.
-git worktree remove --force "$tmp/gh-worktrees/issue-9" && git branch -D "$br9" >/dev/null
-out="$(FAKE_AGENT=commit FAKE_PR_OPEN=1 BATCH_POLL_SECONDS=1 timeout 120 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
-check "github: a finished run with commits and no PR exits 0" 0 "$rc"
-grep -qE "#9 +needs you: commits but no PR" <<<"$out" || { echo "FAIL github: a finished run with no PR is not shown as needing you"; echo "$out"; fail=1; }
+out="$(FAKE_PR_LIST_FAIL=1 bash scripts/factory/run-batch.sh 7 --list 2>&1)"; rc=$?
+check "github: run-batch --list exits 0 when the PR lookup fails" 0 "$rc"
+grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL github: a failed PR lookup does not keep the review state"; echo "$out"; fail=1; }
+# A worktree with commits and no open PR is "needs you", and --auto-continue does not wait for it (AC2).
+out="$(BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
+[[ $rc -ne 124 ]] || { echo "FAIL github: --auto-continue waits for a worktree with commits and no open PR"; fail=1; }
+check "github: --auto-continue exits 0 with a needs-you sub-issue" 0 "$rc"
+grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" || { echo "FAIL github: --auto-continue does not list the needs-you sub-issue"; echo "$out"; fail=1; }
+# A run that exited 0 in this batch with no open PR is "needs you" and is not waited for (AC4). Sub-issue 12
+# is the only open one: sub-issue 9's lookup would otherwise use up FAKE_PR_OPEN_ONCE's first answer.
+printf '9 closed\n10 closed\n11 closed\n12 open\n' > "$FAKE_SUBS"
+rm -f "$FAKE_GH_PR_LIST.seen"
+out="$(FAKE_PR_OPEN_ONCE=1 FAKE_AGENT=commit BATCH_POLL_SECONDS=1 timeout 30 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
+[[ $rc -ne 124 ]] || { echo "FAIL github: --auto-continue waits for a run that exited 0 with no open PR"; echo "$out"; fail=1; }
+check "github: run with exit 0 and no open PR exits 0" 0 "$rc"
+grep -qE "finished #12 \(exit 0\)" <<<"$out" && grep -qE "#12 +needs you: commits but no PR" <<<"$out" \
+  || { echo "FAIL github: exit-0 run with no open PR not shown as needing you"; echo "$out"; fail=1; }
+# A failed PR lookup keeps the batch waiting for the sub-issue (AC5): --auto-continue must not return.
+rm -f "$FAKE_GH_PR_LIST.seen"
+out="$(FAKE_PR_LIST_FAIL=1 BATCH_POLL_SECONDS=1 timeout 5 bash scripts/factory/run-batch.sh 7 --auto-continue 2>&1)"; rc=$?
+check "github: --auto-continue keeps waiting when the PR lookup fails" 124 "$rc"
 printf '9 closed\n10 closed\n11 closed\n' > "$FAKE_SUBS"
 out="$(bash scripts/factory/run-batch.sh 7 2>&1)"; rc=$?
 grep -q "All sub-issues of #7 are closed" <<<"$out" || { echo "FAIL github: closed sub-issues not recognised"; fail=1; }
@@ -590,17 +631,15 @@ if command -v pwsh >/dev/null; then
   printf '9 open\n10 open\n11 open\n' > "$FAKE_SUBS"
   git -C "$ps" worktree add -q -b agent/issue-9-ps "$tmp/ps-worktrees/issue-9" origin/main
   (cd "$tmp/ps-worktrees/issue-9" && echo w > work.txt && git add work.txt && git commit -qm "feat: work")
-  psbr9="$(git -C "$tmp/ps-worktrees/issue-9" branch --show-current)"
   out="$(pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"; rc=$?
   check "ps batch: -List exits 0 with a worktree with commits and no PR" 0 "$rc"
   grep -qE "#9 +needs you: commits but no PR, run open-pr or delete the worktree" <<<"$out" && ! grep -qE "#9 +started: review" <<<"$out" \
     || { echo "FAIL ps batch: a worktree with commits and no PR is not shown as needing you"; echo "$out"; fail=1; }
   BATCH_POLL_SECONDS=1 timeout 60 pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -AutoContinue >/dev/null 2>&1; rc=$?
   [[ $rc -ne 124 ]] || { echo "FAIL ps batch: -AutoContinue waits for a commits-but-no-PR sub-issue"; fail=1; }
-  out="$(FAKE_OPEN_PR_HEADS="$psbr9" pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"
+  out="$(FAKE_PR_OPEN=1 pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"
   grep -qE "#9 +started: review and merge its PR" <<<"$out" || { echo "FAIL ps batch: a worktree with commits and an open PR is not shown as awaiting review"; echo "$out"; fail=1; }
-  echo 99 > "$tmp/ps-gh-fail-pulls"
-  out="$(FAKE_GH_API_FAIL="$tmp/ps-gh-fail-pulls" FAKE_GH_API_FAIL_ON=pulls pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"; rc=$?
+  out="$(FAKE_PR_LIST_FAIL=1 pwsh -NoProfile -File scripts/factory/run-batch.ps1 7 -List 2>&1)"; rc=$?
   check "ps batch: -List exits 0 when the open-PR lookup fails" 0 "$rc"
   grep -qE "#9 +started: review" <<<"$out" || { echo "FAIL ps batch: a failed open-PR lookup does not keep started: review"; echo "$out"; fail=1; }
   shopt -u nullglob

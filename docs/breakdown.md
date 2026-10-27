@@ -35,7 +35,7 @@ Agents cannot edit `complexity.env` or the check scripts (guard `deny-paths`). C
 `create-issues` validates again, previews every item and asks for confirmation (`--yes` skips the prompt). Using your `gh` credentials, it then:
 - creates the issues in dependency order. Only items with no dependencies get the `agent-ready` label, because that label starts the Claude GitHub Action. Add it to the others when their blockers are merged;
 - adds them to the parent as native [sub-issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues);
-- records native [blocked-by dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies);
+- records native [blocked-by dependencies](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies) between the items, and records the parent as blocked by each of its new sub-issues (a warning names any link that could not be recorded; add it by hand). `run-batch` does not read the parent's blockers;
 - comments the plan on the parent.
 
 `--from-pr` only accepts PRs on `copilot/*` or `agent/*` branches. `--from-issue` only reads comments by the `claude` / `github-actions` bots.
@@ -67,7 +67,7 @@ scripts/factory/run-batch.sh <parent> --auto-continue   # …and keep starting i
 - Without `--auto-continue`, the batch ends when the runs it could start have finished. Review and merge them, then run it again.
 - With `--auto-continue`, it checks every `BATCH_POLL_SECONDS` (default 60) for your merges and starts the items they unblock. It stops when every item is merged, or when nothing can move without you: an item stopped with questions, a breakdown or a failure.
 - Merging is never automatic. On GitHub each item is a normal PR; locally you run `accept.sh <parent>.<n>` (which also checks the size).
-- An item that already has a branch or worktree is not started again. Delete it to retry, or run `run-issue.sh` / `run-task.sh` for that item yourself. A later batch shows such an item as `review` only if its branch has an open PR. If its branch has commits but no open PR, it shows `needs you: commits but no PR, run open-pr or delete the worktree` and `--auto-continue` does not wait for it. An item with no commits (the earlier run stopped) also shows as `needs you`, so `--auto-continue` does not wait for a PR that will never come.
+- An item that already has a branch or worktree is not started again. Delete it to retry, or run `run-issue.sh` / `run-task.sh` for that item yourself. A later batch shows such an item as `review and merge its PR` only if its branch has an open PR. A branch with commits and no open PR is shown as `needs you: commits but no PR, run open-pr or delete the worktree`, and a branch with no commits as `needs you` (the earlier run stopped). `--auto-continue` does not wait for either, since no PR will come on its own.
 - GitHub: a GitHub API call that fails (e.g. a network timeout) is retried up to `BATCH_GH_RETRIES` times (default 3), `BATCH_GH_RETRY_SECONDS` apart (default 5), before the batch gives up.
 - Exit codes: 0 every run it started finished, 1 a run failed or stopped (questions, breakdown, unpushed work, no result) or a GitHub API call kept failing, 2 no items found.
 - Agents are denied `run-batch` (it starts more agents).

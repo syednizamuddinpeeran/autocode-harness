@@ -35,16 +35,12 @@ $ghRetries = if ($env:BATCH_GH_RETRIES) { [int]$env:BATCH_GH_RETRIES } else { 3 
 $ghPause = if ($null -ne $env:BATCH_GH_RETRY_SECONDS) { [int]$env:BATCH_GH_RETRY_SECONDS } else { 5 }
 # gh api with retries: a failed call (e.g. a network timeout) is tried again up to BATCH_GH_RETRIES
 # times (default 3), BATCH_GH_RETRY_SECONDS apart (default 5), before the batch gives up (exit 1).
-# While $script:GhSoft is set (the open-PR lookup), a call that gives up sets $script:GhFailed and
-# returns nothing instead of exiting.
-$script:GhSoft = $false; $script:GhFailed = $false
 function Invoke-GhApi {
   for ($i = 0; ; $i++) {
     $out = @(gh api @args)
     if ($LASTEXITCODE -eq 0) { return $out }
     if ($i -ge $ghRetries) {
       [Console]::Error.WriteLine("GitHub API call failed $($i + 1) times, giving up: gh api $($args[0])")
-      if ($script:GhSoft) { $script:GhFailed = $true; return }
       exit 1
     }
     [Console]::Error.WriteLine("GitHub API call failed, retrying in ${ghPause}s ($($i + 1)/$ghRetries): gh api $($args[0])")
@@ -61,11 +57,10 @@ function Update-PrState([string]$n) {
   if (-not ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0)) { $script:prs.Remove($n); return }
   $branch = git -C $wt branch --show-current 2>$null
   if (-not $branch) { $script:prs[$n] = 'unknown'; return }
-  $script:GhSoft = $true; $script:GhFailed = $false
-  try { $refs = @(Invoke-GhApi "repos/{owner}/{repo}/pulls?state=open" --paginate --jq '.[].head.ref') }
-  finally { $script:GhSoft = $false }
-  if ($script:GhFailed) { $script:prs[$n] = 'unknown' }
-  elseif ($refs -contains $branch) { $script:prs[$n] = 'open' }
+  # Same lookup as run-batch.sh: a failed gh pr list leaves 'unknown' (read-only, the batch keeps going).
+  $count = (@(gh pr list --head $branch --state open --json number --jq length 2>$null) -join '').Trim()
+  if ($LASTEXITCODE -ne 0) { $script:prs[$n] = 'unknown' }
+  elseif ($count -match '^[1-9]') { $script:prs[$n] = 'open' }
   else { $script:prs[$n] = 'none' }
 }
 function Update-Issues {
@@ -105,7 +100,7 @@ function Show-State {
       'done'    { 'closed' }
       'running' { "running (log: .agent-logs/batch/issue-$n.log)" }
       'review'  { "started: review and merge its PR (worktree $(Join-Path $wtRoot "issue-$n"))" }
-      'nopr'    { 'needs you: commits but no PR, run open-pr or delete the worktree' }
+      'nopr'    { "needs you: commits but no PR, run open-pr or delete the worktree (worktree $(Join-Path $wtRoot "issue-$n"))" }
       'stopped' { "needs you: see .agent-logs/batch/issue-$n.log (questions, breakdown or failure)" }
       'blocked' { "blocked by: $($blockers[$n])" }
       'ready'   { 'ready' }
