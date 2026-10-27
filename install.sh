@@ -15,7 +15,9 @@
 #              claude-code  Claude Code (CLI + GitHub Action): .claude/agents, skills, settings.json
 #   --cloud  where the project deploys                                  [default: none]
 #              aws   deny AWS credential use and deploys; deploy-from-CI workflow (GitHub repos)
-#   --force  overwrite files that already exist in the target
+#   --force  overwrite files that already exist in the target. scripts/factory/paths.env is
+#            never overwritten, not even with --force. After the copy, existing factory files are
+#            moved to the locations it names (the migration runs on every install).
 #   --keep-harness  the target already has its own agent harness (e.g. this template repo): install
 #            the factory but never write .github/hooks/, .github/workflows/, .claude/settings.json,
 #            AGENTS.md, CLAUDE.md or the hook self-test (test-hooks, hook-cases.txt), not even with
