@@ -19,7 +19,7 @@ pwsh ./install.ps1 <target-repo> [-Repo github|local] [-Os windows|linux|wsl] `
 | Keep harness | `--keep-harness` / `-KeepHarness` — the target already has its own hooks and policy: install the factory without touching them | off | [below](#repos-that-already-have-their-own-harness---keep-harness) |
 | Cloud (where the project deploys) | `none`<br>`aws` — AWS guardrails, credential-free agents, OIDC deploy workflow | `none` | [aws.md](aws.md) |
 
-The target must be a git repository with at least one commit: the top of a normal checkout or of a git worktree (`git worktree add`, whose `.git` is a file). Existing files are skipped unless you pass `--force` (not with `--keep-harness`: harness files are never written, see [below](#repos-that-already-have-their-own-harness---keep-harness)); the installer appends `.agent-logs/` and `.agent-work/` to `.gitignore`. Re-running with the same options changes nothing.
+The target must be a git repository with at least one commit: the top of a normal checkout or of a git worktree (`git worktree add`, whose `.git` is a file). Existing files are skipped unless you pass `--force` (not with `--keep-harness`: harness files are never written, see [below](#repos-that-already-have-their-own-harness---keep-harness)). With `install.sh`, `scripts/factory/paths.env` is never overwritten, not even with `--force`, so an edited file is kept; after the copy, existing factory files are moved to the locations it names (this is `install.sh` only: `install.ps1` has no migration and still overwrites `paths.env` under `-Force`); the installer appends `.agent-logs/` and `.agent-work/` to `.gitignore`. Re-running with the same options changes nothing.
 
 ## What each choice installs
 

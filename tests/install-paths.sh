@@ -83,4 +83,9 @@ check "e1: --help exit 0 and says never overwritten" yes "$([[ $rc -eq 0 ]] && g
 check "e2: --help says moved to the locations it names" yes "$(grep -qF 'moved to the locations it names' <<<"$help" && echo yes || echo no)"
 check "e3: --help leaks no code line" 0 "$(grep -c 'set -euo' <<<"$help")"
 
+# (g) docs/install.md states the same paths.env rule on the --force paragraph (AC1)
+docs_line="$(grep -F 'Existing files are skipped unless' "$root/docs/install.md")"
+check "g1: --force line says never overwritten" yes "$(grep -qF 'never overwritten' <<<"$docs_line" && echo yes || echo no)"
+check "g1: --force line says moved to the locations it names" yes "$(grep -qF 'moved to the locations it names' <<<"$docs_line" && echo yes || echo no)"
+
 exit "$fail"
