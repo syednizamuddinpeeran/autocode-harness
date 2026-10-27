@@ -82,9 +82,23 @@ function Test-GitOrGhSegments([string]$Code) {
 # quote in a row ("" or '') is a fallback. The command keeps its line breaks, which end a command.
 # Returns View and Fallback (the caller then matches the raw command too). A command that does not
 # start with git or gh is a fallback, as is any word in $ExecWords.
+# Test-TextOption <text before a quoted span> <quoted body>: $true when the span is data. It is data
+# when it is the value of a text option (--message, --title, --body, --subject, -m, -t, -b) or is not
+# after an option at all. Any other option value (--upload-pack=, -u, --extcmd, --body-file) can be
+# run by git or gh, so the span is not data. Same rule as text_option_ok in guard.sh (case-sensitive).
+function Test-TextOption([string]$Pre, [string]$Body) {
+  $textOptions = '^(message|title|body|subject|m|t|b)$'
+  $Pre = $Pre.TrimEnd()
+  if ($Pre -cmatch '(^|\s)-+([A-Za-z0-9_-]+)=?$' -and $Matches[2] -cnotmatch $textOptions) { return $false }
+  if ($Body -cmatch '^-+([A-Za-z0-9_-]+)([=\s]|$)' -and $Matches[1] -cnotmatch $textOptions) { return $false }
+  return $true
+}
+
 function Get-CodeView([string]$Command) {
   $sb = [System.Text.StringBuilder]::new()
   $fallback = $false
+  # A backslash can join words the view keeps apart (gh\ issue): the raw text is matched too.
+  if ($Command.Contains('\')) { $fallback = $true }
   $n = $Command.Length; $i = 0
   while ($i -lt $n) {
     $c = $Command[$i]
@@ -99,6 +113,7 @@ function Get-CodeView([string]$Command) {
     }
     if (-not $closed) { $fallback = $true; [void]$sb.Append($Command.Substring($i)); break }
     $body = $Command.Substring($i + 1, $j - $i - 1)
+    if (-not (Test-TextOption $Command.Substring(0, $i) $body)) { $fallback = $true }
     if ($j + 1 -lt $n -and $Command[$j + 1] -eq $c) { $fallback = $true }
     if ($body -match '[$`\\]') { [void]$sb.Append($Command.Substring($i, $j - $i + 1)) }
     elseif ($body -match '\s') { [void]$sb.Append('""') }
@@ -119,11 +134,13 @@ function Test-Shell {
   }
   if (-not $cmd) { $cmd = $argsJson }
   $norm = ($cmd -replace '[\r\n\t]', ' ') -replace ' {2,}', ' '
+  # normU: the raw text without backslashes or backticks, so an escaped space is seen as a space.
+  $normU = $norm -replace '[\\`]', ''
   $cv = Get-CodeView ($cmd -replace '\r', '')
 
   foreach ($pat in Get-Patterns (Join-Path $policyDir 'deny-commands.txt')) {
     $rx = ConvertTo-NetRegex $pat
-    if ($cv.View -match $rx -or ($cv.Fallback -and $norm -match $rx)) { Deny "command matches denied pattern [$pat]" }
+    if ($cv.View -match $rx -or ($cv.Fallback -and ($norm -match $rx -or $normU -match $rx))) { Deny "command matches denied pattern [$pat]" }
   }
 
   $rules = Read-FactoryEnvFile (Join-Path $policyDir 'git-rules.env')

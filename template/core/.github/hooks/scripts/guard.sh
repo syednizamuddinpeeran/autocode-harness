@@ -83,9 +83,25 @@ starts_git_or_gh() {
 # heredoc, a word that runs its arguments (exec_words), or any command that does not start with git
 # or gh. The caller then matches the raw command too. Bash dynamic scoping: view and fallback are the
 # caller's locals.
+# text_option_ok <text before a quoted span> <quoted body>: 0 when the span is data. It is data when
+# it is the value of a text option (--message, --title, --body, --subject, -m, -t, -b) or is not
+# after an option at all. Any other option value (--upload-pack=, -u, --extcmd, --body-file) can be
+# run by git or gh, so the span is not data and the caller falls back to the raw text.
+text_option_ok() {
+  local pre="$1" body="$2" name
+  local re_pre='(^|[[:space:]])-+([A-Za-z0-9_-]+)=?$' re_body='^-+([A-Za-z0-9_-]+)([=[:space:]]|$)'
+  pre="${pre%"${pre##*[![:space:]]}"}"
+  if [[ "$pre" =~ $re_pre ]]; then name="${BASH_REMATCH[2]}"; else name=""; fi
+  case "$name" in ""|message|title|body|subject|m|t|b) ;; *) return 1 ;; esac
+  if [[ "$body" =~ $re_body ]]; then name="${BASH_REMATCH[1]}"; else name=""; fi
+  case "$name" in ""|message|title|body|subject|m|t|b) return 0 ;; *) return 1 ;; esac
+}
+
 code_view() {
-  local s="$1" n i j c q rest body out="" closed
+  local s="$1" n i j c q rest body out="" closed pre
   n=${#s}; i=0; fallback=0
+  # A backslash can join words the view keeps apart (gh\ issue): the raw text is matched too.
+  [[ "$s" == *'\'* ]] && fallback=1
   while (( i < n )); do
     c="${s:i:1}"
     if [[ "$c" == '\' ]]; then out+="${s:i:2}"; ((i+=2)); continue; fi
@@ -107,6 +123,8 @@ code_view() {
     fi
     if (( ! closed )); then fallback=1; out+="${s:i}"; break; fi
     body="${s:i+1:j-i-1}"
+    pre="${s:0:i}"
+    text_option_ok "$pre" "$body" || fallback=1
     [[ "${s:j+1:1}" == "$c" ]] && fallback=1
     case "$body" in
       *'$'*|*'`'*|*'\'*) out+="${s:i:j-i+1}" ;;
@@ -125,14 +143,16 @@ code_view() {
 }
 
 check_shell() {
-  local cmd norm pat view seg fallback
+  local cmd norm pat view seg fallback norm_u
   cmd="$(jq -r '.command // .cmd // .script // .input // .raw // empty' <<<"$args")"
   [[ -z "$cmd" ]] && cmd="$(jq -r 'tostring' <<<"$args")"
   norm="$(tr '\n\t' '  ' <<<"$cmd" | tr -s ' ')"
+  # norm_u: the raw text with backslashes removed, so an escaped space (gh\ issue) is seen as a space.
+  norm_u="${norm//\\/}"
   code_view "$cmd"
 
   while IFS= read -r pat; do
-    if grep -Eiq -- "$pat" <<<"$view" || { (( fallback )) && grep -Eiq -- "$pat" <<<"$norm"; }; then
+    if grep -Eiq -- "$pat" <<<"$view" || { (( fallback )) && { grep -Eiq -- "$pat" <<<"$norm" || grep -Eiq -- "$pat" <<<"$norm_u"; }; }; then
       deny "command matches denied pattern [$pat]"
     fi
   done < <(patterns "$policy_dir/deny-commands.txt")
