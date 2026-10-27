@@ -47,29 +47,47 @@ function Invoke-GhApi {
     Start-Sleep -Seconds $ghPause
   }
 }
-$subs = @(); $st = @{}; $blockers = @{}
+$subs = @(); $st = @{}; $blockers = @{}; $prs = @{}
+# Whether a sub-issue with commits has an open PR for its branch: $prs[n] is 'open', 'none', or 'unknown'
+# (the lookup failed, so it still reads as awaiting review). Unset when it has no commits. Run only from
+# Update-Issues and the reap loop, never from Get-State, so the API is not called every poll.
+function Update-PrState([string]$n) {
+  $wt = Join-Path $wtRoot "issue-$n"
+  $ahead = git -C $wt rev-list --count "origin/$base..HEAD" 2>$null
+  if (-not ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0)) { $script:prs.Remove($n); return }
+  $branch = git -C $wt branch --show-current 2>$null
+  if (-not $branch) { $script:prs[$n] = 'unknown'; return }
+  # Same lookup as run-batch.sh: a failed gh pr list leaves 'unknown' (read-only, the batch keeps going).
+  $count = (@(gh pr list --head $branch --state open --json number --jq length 2>$null) -join '').Trim()
+  if ($LASTEXITCODE -ne 0) { $script:prs[$n] = 'unknown' }
+  elseif ($count -match '^[1-9]') { $script:prs[$n] = 'open' }
+  else { $script:prs[$n] = 'none' }
+}
 function Update-Issues {
-  $script:subs = @(); $script:st = @{}; $script:blockers = @{}
+  $script:subs = @(); $script:st = @{}; $script:blockers = @{}; $script:prs = @{}
   foreach ($row in @(Invoke-GhApi "repos/{owner}/{repo}/issues/$Parent/sub_issues" --paginate --jq '.[] | "\(.number) \(.state)"')) {
     if (-not $row) { continue }
     $n, $s = $row -split ' ', 2
     $script:subs += $n; $script:st[$n] = $s
     if ($s -eq 'open') {
       $script:blockers[$n] = (@(Invoke-GhApi "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --paginate --jq '.[] | select(.state == "open") | "#\(.number)"') -join ' ')
+      Update-PrState $n
     }
   }
 }
 $procs = @{}; $rc = @{}
+# State of one sub-issue: done | running | stopped | review | nopr | blocked | ready
+# review: awaiting its PR (or the PR lookup failed); nopr: has commits but no open PR, so nobody will merge it.
 function Get-State([string]$n) {
   if ($st[$n] -ne 'open') { return 'done' }
   if ($procs.ContainsKey($n)) { return 'running' }
   if ($rc.ContainsKey($n) -and $rc[$n] -ne 0) { return 'stopped' }
-  if ($rc.ContainsKey($n)) { return 'review' }
-  # Started by an earlier batch: commits mean it awaits review; none mean it stopped (questions, breakdown).
+  if ($rc.ContainsKey($n)) { if ($prs[$n] -eq 'none') { return 'nopr' }; return 'review' }
+  # Started by an earlier batch: commits mean it awaits review (or needs a PR); none mean it stopped (questions, breakdown).
   $wt = Join-Path $wtRoot "issue-$n"
   if (Test-Path -LiteralPath $wt) {
     $ahead = git -C $wt rev-list --count "origin/$base..HEAD" 2>$null
-    if ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0) { return 'review' }
+    if ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0) { if ($prs[$n] -eq 'none') { return 'nopr' }; return 'review' }
     return 'stopped'
   }
   if (-not $blockers[$n].Trim()) { return 'ready' }
@@ -82,6 +100,7 @@ function Show-State {
       'done'    { 'closed' }
       'running' { "running (log: .agent-logs/batch/issue-$n.log)" }
       'review'  { "started: review and merge its PR (worktree $(Join-Path $wtRoot "issue-$n"))" }
+      'nopr'    { "needs you: commits but no PR, run open-pr or delete the worktree (worktree $(Join-Path $wtRoot "issue-$n"))" }
       'stopped' { "needs you: see .agent-logs/batch/issue-$n.log (questions, breakdown or failure)" }
       'blocked' { "blocked by: $($blockers[$n])" }
       'ready'   { 'ready' }
@@ -100,6 +119,7 @@ while ($true) {
     $p = $procs[$n]
     if ($p.HasExited) {
       $p.WaitForExit(); $rc[$n] = $p.ExitCode; $procs.Remove($n)
+      Update-PrState $n
       if ($rc[$n] -ne 0) { $failed = 1 }
       Write-Output "finished #$n (exit $($rc[$n]))"
     }
