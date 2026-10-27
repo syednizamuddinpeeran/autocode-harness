@@ -54,14 +54,105 @@ push_current_only="$(git_rule PUSH_CURRENT_BRANCH_ONLY)"
 patterns() { [[ -f "$1" ]] && grep -Ev '^\s*(#|$)' "$1" || true; }
 
 # ---------- shell commands ----------
+# Words that run their arguments (or set up a program that does): quoted text after them is code.
+# git -c, git submodule foreach, git bisect run and git rebase --exec run text too (--exec via exec).
+exec_words='(^|[^A-Za-z0-9_])(bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|wsl|eval|exec|source|xargs|env|command|builtin|time|nohup|nice|timeout|watch|start|call|iex|invoke-expression|invoke-command|start-process|start-job|ssh|python[0-9.]*|perl|ruby|node|php|make|alias|editor|visual|pager|browser|foreach|run|-c|-x|git_[a-z_]*)'
+
+# starts_git_or_gh <code view with line breaks>: true when there is at least one command and every
+# command in it starts with git or gh. Commands are split at ; | & ( ) { } and line breaks; a >& or
+# &> redirection is not a split.
+starts_git_or_gh() {
+  local t="$1" line found=0
+  t="${t//>&/>}"; t="${t//&>/>}"
+  t="$(sed -E 's/[;|&(){}]+/\n/g' <<<"$t")"
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^(git|gh)([[:space:]]|$) ]] || return 1
+    found=1
+  done <<<"$t"
+  (( found ))
+}
+
+# code_view <command>: sets view, the text the deny patterns are matched against first. Unquoted
+# text is kept as is. A quoted span with no $, backtick or backslash is data: it is blanked to ""
+# when it has whitespace (a commit message or PR title is not a command) and kept bare when it has
+# none ("gh" stays gh, so "gh" issue create is still seen). Any other quoted span is kept with its
+# quotes. The command is given with its line breaks, which end a command. Sets fallback=1 when the
+# view cannot be trusted alone: an unterminated quote, two quotes in a row, a $ or backtick or
+# heredoc, a word that runs its arguments (exec_words), or any command that does not start with git
+# or gh. The caller then matches the raw command too. Bash dynamic scoping: view and fallback are the
+# caller's locals.
+# text_option_ok <text before a quoted span> <quoted body>: 0 when the span is data. It is data when
+# it is the value of a text option (--message, --title, --body, --subject, -m, -t, -b) or is not
+# after an option at all. Any other option value (--upload-pack=, -u, --extcmd, --body-file) can be
+# run by git or gh, so the span is not data and the caller falls back to the raw text.
+text_option_ok() {
+  local pre="$1" body="$2" name
+  local re_pre='(^|[[:space:]])-+([A-Za-z0-9_-]+)=?$' re_body='^-+([A-Za-z0-9_-]+)([=[:space:]]|$)'
+  pre="${pre%"${pre##*[![:space:]]}"}"
+  if [[ "$pre" =~ $re_pre ]]; then name="${BASH_REMATCH[2]}"; else name=""; fi
+  case "$name" in ""|message|title|body|subject|m|t|b) ;; *) return 1 ;; esac
+  if [[ "$body" =~ $re_body ]]; then name="${BASH_REMATCH[1]}"; else name=""; fi
+  case "$name" in ""|message|title|body|subject|m|t|b) return 0 ;; *) return 1 ;; esac
+}
+
+code_view() {
+  local s="$1" n i j c q rest body out="" closed pre
+  n=${#s}; i=0; fallback=0
+  # A backslash can join words the view keeps apart (gh\ issue): the raw text is matched too.
+  [[ "$s" == *'\'* ]] && fallback=1
+  while (( i < n )); do
+    c="${s:i:1}"
+    if [[ "$c" == '\' ]]; then out+="${s:i:2}"; ((i+=2)); continue; fi
+    if [[ "$c" != "'" && "$c" != '"' ]]; then
+      rest="${s:i}"; q="${rest%%[\\\'\"]*}"; [[ -z "$q" ]] && q="$c"
+      out+="$q"; ((i+=${#q})); continue
+    fi
+    j=$((i + 1)); closed=0
+    if [[ "$c" == "'" ]]; then
+      rest="${s:j}"; q="${rest%%\'*}"; j=$((j + ${#q}))
+      (( j < n )) && closed=1
+    else
+      while (( j < n )); do
+        rest="${s:j}"; q="${rest%%[\\\"]*}"; ((j+=${#q}))
+        (( j < n )) || break
+        if [[ "${s:j:1}" == '"' ]]; then closed=1; break; fi
+        ((j+=2))
+      done
+    fi
+    if (( ! closed )); then fallback=1; out+="${s:i}"; break; fi
+    body="${s:i+1:j-i-1}"
+    pre="${s:0:i}"
+    text_option_ok "$pre" "$body" || fallback=1
+    [[ "${s:j+1:1}" == "$c" ]] && fallback=1
+    case "$body" in
+      *'$'*|*'`'*|*'\'*) out+="${s:i:j-i+1}" ;;
+      *[[:space:]]*) out+='""' ;;
+      *) out+="$body" ;;
+    esac
+    ((i=j+1))
+  done
+  seg="$out"
+  view="${out//$'\n'/ }"; view="${view//$'\t'/ }"
+  while [[ "$view" == *'  '* ]]; do view="${view//  / }"; done
+  if [[ "$view" == *'$'* || "$view" == *'`'* || "$view" == *'<<'* || "$view" == *"@'"* || "$view" == *'@"'* ]] \
+     || grep -Eiq -- "$exec_words" <<<"$view"; then fallback=1; fi
+  # Only a command line whose every command is git or gh is judged by its code view alone.
+  (( fallback )) || starts_git_or_gh "$seg" || fallback=1
+}
+
 check_shell() {
-  local cmd norm pat
+  local cmd norm pat view seg fallback norm_u
   cmd="$(jq -r '.command // .cmd // .script // .input // .raw // empty' <<<"$args")"
   [[ -z "$cmd" ]] && cmd="$(jq -r 'tostring' <<<"$args")"
   norm="$(tr '\n\t' '  ' <<<"$cmd" | tr -s ' ')"
+  # norm_u: the raw text with backslashes removed, so an escaped space (gh\ issue) is seen as a space.
+  norm_u="${norm//\\/}"
+  code_view "$cmd"
 
   while IFS= read -r pat; do
-    if grep -Eiq -- "$pat" <<<"$norm"; then
+    if grep -Eiq -- "$pat" <<<"$view" || { (( fallback )) && { grep -Eiq -- "$pat" <<<"$norm" || grep -Eiq -- "$pat" <<<"$norm_u"; }; }; then
       deny "command matches denied pattern [$pat]"
     fi
   done < <(patterns "$policy_dir/deny-commands.txt")

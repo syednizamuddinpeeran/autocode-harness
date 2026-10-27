@@ -38,6 +38,27 @@ allow sh     heredoc in substitution    :: git commit -m "$(cat <<'EOF'\nfix: ha
 deny  sh     quoted main refspec        :: git push origin "main"
 deny  sh     push inside bash -c        :: bash -c 'git push origin main'
 deny  sh     push in command subst      :: echo "$(git push origin main)"
+# A denied command name inside a commit message, PR title or body is data, not a command. Text that
+# is run (command substitution, bash -c, a quoted command word, a variable, xargs) is still denied.
+allow sh     commit message names gh issue create :: git commit -m "docs: gh issue create is human-only"
+allow sh     pr title and body name it            :: gh pr create --title "Fix gh issue create" --body "see gh issue create"
+deny  sh     gh issue create in command subst     :: git commit -m "$(gh issue create --title x --body y)"
+deny  sh     gh issue create inside bash -c       :: bash -c "gh issue create --title x --body y"
+deny  sh     quoted gh command word               :: "gh" issue create --title x --body y
+deny  sh     gh issue create through a variable   :: X="gh issue create --title x --body y"; $X
+deny  sh     gh issue create piped to xargs       :: printf "gh issue create --title x" | xargs
+# A quoted denied command is still run when a word that runs its text (awk, su, sed, vim, git -c,
+# git submodule foreach, git rebase --exec) or a line break before a non-git command carries it.
+deny  sh     gh issue create in awk system        :: awk 'BEGIN{system("gh issue create --title x --body y")}'
+deny  sh     gh issue create through su -c        :: su -c "gh issue create --title x --body y"
+deny  sh     gh issue create through sed 1e       :: sed '1e gh issue create --title x --body y' file
+deny  sh     gh issue create through vim -c       :: vim -es -c '!gh issue create --title x --body y' -c q
+deny  sh     gh issue create in submodule foreach :: git submodule foreach 'gh issue create --title x --body y'
+deny  sh     gh issue create in rebase exec       :: git rebase --exec "gh issue create --title x --body y" HEAD
+deny  sh     gh issue create via git -c alias     :: git -c alias.x='!gh issue create --title x --body y' x
+deny  sh     gh issue create via git -c filter    :: git -c filter.x.clean='gh issue create --title x --body y' status
+deny  sh     gh issue create after a line break   :: git status\nfoo "gh issue create --title x --body y"
+deny  sh     gh issue create after a semicolon    :: git status; foo "gh issue create --title x --body y"
 @checkout main
 allow sh     commit on main says push   :: git commit -m "then git push origin HEAD"
 deny  sh     push from main with 2>&1   :: git push -u origin HEAD 2>&1
@@ -52,3 +73,20 @@ deny  sh     subshell cd does not stick :: (cd {worktree}) && git push -u origin
 @worktree feature/wt-human
 deny  sh     cd non-agent worktree push :: cd {worktree} && git push -u origin HEAD
 deny  sh     git -C non-agent worktree  :: git -C {worktree} push origin HEAD
+# An option whose value is run by git or gh (--upload-pack, --extcmd, -u, --body-file) is code, not
+# text, even when the value is quoted, after =, after a space, or escaped. Only --message, --title,
+# --body, --subject (and -m, -t, -b) take text.
+allow sh     text option long form               :: git commit --message="docs: gh issue create is human-only"
+allow sh     text options short and long         :: gh pr create -t "Fix gh issue create" -b "see gh issue create"
+allow sh     quoted pathspec names it            :: git status "gh issue create"
+deny  sh     upload-pack quoted after =          :: git fetch --upload-pack="gh issue create --title x --body y" origin
+deny  sh     ls-remote upload-pack quoted        :: git ls-remote --upload-pack="gh issue create --title x --body y" origin
+deny  sh     clone upload-pack quoted            :: git clone --upload-pack="gh issue create --title x --body y" a b
+deny  sh     difftool extcmd quoted              :: git difftool --extcmd="gh issue create --title x --body y" a b
+deny  sh     upload-pack in a separate word      :: git fetch --upload-pack "gh issue create --title x --body y" origin
+deny  sh     upload-pack single quoted           :: git fetch --upload-pack='gh issue create --title x --body y' origin
+deny  sh     clone short -u option               :: git clone -u "gh issue create --title x --body y" a b
+deny  sh     option value quoted as one word     :: git fetch "--upload-pack=gh issue create --title x --body y" origin
+deny  sh     upload-pack with escaped spaces     :: git fetch --upload-pack=gh\ issue\ create\ --title\ x\ --body\ y origin
+deny  sh     gh alias set runs the text          :: gh alias set x "gh issue create --title x --body y"
+deny  sh     git config alias runs the text      :: git config alias.x "!gh issue create --title x --body y"
