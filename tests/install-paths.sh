@@ -5,6 +5,7 @@
 #   (b) AC2: --force keeps an edited paths.env, prints the kept line, and moves files to its DRAFTS_DIR
 #   (c) AC3: a migration that refuses makes install exit non-zero
 #   (d) an unedited paths.env is skipped on --force with "skip (exists)" and no kept line
+#   (e) AC2: install.sh --help states the paths.env rule and leaks no code lines
 # Linux only: uses GNU touch -d @EPOCH and date -d.
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -75,5 +76,11 @@ out="$(bash "$installer" "$d" --repo github --force 2>&1)"; rc=$?
 check "d: --force re-install exit 0" 0 "$rc"
 check "d: skip line printed" yes "$(grep -qxF 'skip (exists): scripts/factory/paths.env' <<<"$out" && echo yes || echo no)"
 check "d: no kept line" 0 "$(grep -c 'kept (your edits)' <<<"$out")"
+
+# (e) install.sh --help states the paths.env rule, and the usage text stops at the header
+help="$(bash "$installer" --help 2>&1)"; rc=$?
+check "e1: --help exit 0 and says never overwritten" yes "$([[ $rc -eq 0 ]] && grep -qF 'never overwritten' <<<"$help" && echo yes || echo no)"
+check "e2: --help says moved to the locations it names" yes "$(grep -qF 'moved to the locations it names' <<<"$help" && echo yes || echo no)"
+check "e3: --help leaks no code line" 0 "$(grep -c 'set -euo' <<<"$help")"
 
 exit "$fail"
