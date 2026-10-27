@@ -122,6 +122,52 @@ keep_harness_one() {
   bash scripts/factory/check.sh >/dev/null || { echo "check.sh failed on the repo's own hook helpers"; return 1; }
 }
 
+# The migration through install.sh (not migrate-paths.sh directly). Stamps come from fixed UTC mtimes,
+# so the expected names are fixed strings. Each scenario gets its own fresh repo.
+migrate_one() {
+  local tmp="$1" out when stamp="2026-01-02T03-04-05Z" pair before
+  when="@$(date -u -d '2026-01-02T03:04:05Z' +%s)"
+  # AC1: old flat files, then a plain re-run moves each one to its stamped name.
+  mkdir -p "$tmp/a" && cd "$tmp/a" || return 1
+  git init -q -b main . && git config user.email t@t && git config user.name t || return 1
+  echo "# scratch" > README.md && git add -A && git commit -qm init || return 1
+  bash "$root/install.sh" "$tmp/a" --repo github --os linux --assistant claude-code >/dev/null || { echo "install failed"; return 1; }
+  mkdir -p .agent-work/drafts .agent-work/issue-7 .agent-logs
+  echo alpha > .agent-work/drafts/alpha.md && touch -d "$when" .agent-work/drafts/alpha.md
+  echo brief > .agent-work/issue-7/brief.md && touch -d "$when" .agent-work/issue-7
+  echo sess > .agent-logs/sess1.jsonl && touch -d "$when" .agent-logs/sess1.jsonl
+  out="$(bash "$root/install.sh" "$tmp/a" --repo github --os linux --assistant claude-code)" || { echo "re-install failed"; return 1; }
+  for pair in ".agent-work/drafts/alpha.md -> .agent-work/drafts/$stamp-alpha/draft.md" \
+              ".agent-work/issue-7 -> .agent-work/$stamp-issue-7" \
+              ".agent-logs/sess1.jsonl -> .agent-logs/$stamp-sess1/sess1.jsonl"; do
+    grep -qxF "$pair" <<<"$out" || { echo "no move line: $pair"; return 1; }
+  done
+  [[ -f ".agent-work/drafts/$stamp-alpha/draft.md" && -f ".agent-work/$stamp-issue-7/brief.md" \
+     && -f ".agent-logs/$stamp-sess1/sess1.jsonl" ]] || { echo "moved files missing"; return 1; }
+  [[ ! -e .agent-work/drafts/alpha.md && ! -e .agent-work/issue-7 && ! -e .agent-logs/sess1.jsonl ]] \
+    || { echo "flat sources still present"; return 1; }
+
+  # AC2: DRAFTS_DIR edited in the kept paths.env, then --force twice.
+  mkdir -p "$tmp/b" && cd "$tmp/b" || return 1
+  git init -q -b main . && git config user.email t@t && git config user.name t || return 1
+  echo "# scratch" > README.md && git add -A && git commit -qm init || return 1
+  bash "$root/install.sh" "$tmp/b" --repo github --os linux --assistant claude-code >/dev/null || { echo "install failed"; return 1; }
+  sed -i 's|^DRAFTS_DIR=.agent-work/drafts$|DRAFTS_DIR=elsewhere/drafts|' scripts/factory/paths.env
+  grep -qxF 'DRAFTS_DIR=elsewhere/drafts' scripts/factory/paths.env || { echo "test setup: paths.env not edited"; return 1; }
+  mkdir -p .agent-work/drafts && echo gamma > .agent-work/drafts/gamma.md && touch -d "$when" .agent-work/drafts/gamma.md
+  out="$(bash "$root/install.sh" "$tmp/b" --repo github --os linux --assistant claude-code --force)" || { echo "--force failed"; return 1; }
+  grep -qxF 'kept (your edits): scripts/factory/paths.env' <<<"$out" || { echo "paths.env not reported as kept"; return 1; }
+  grep -qxF 'DRAFTS_DIR=elsewhere/drafts' scripts/factory/paths.env || { echo "edited DRAFTS_DIR was overwritten"; return 1; }
+  grep -qxF ".agent-work/drafts/gamma.md -> elsewhere/drafts/$stamp-gamma/draft.md" <<<"$out" \
+    || { echo "gamma move line missing"; return 1; }
+  [[ -f "elsewhere/drafts/$stamp-gamma/draft.md" && ! -e .agent-work/drafts/gamma.md ]] || { echo "gamma not moved"; return 1; }
+  before="$(snapshot)"
+  out="$(bash "$root/install.sh" "$tmp/b" --repo github --os linux --assistant claude-code --force)" || { echo "second --force failed"; return 1; }
+  if grep -q ' -> ' <<<"$out"; then echo "second --force moved something"; return 1; fi
+  [[ "$before" == "$(snapshot)" ]] || { echo "second --force changed files"; return 1; }
+  return 0
+}
+
 # A git worktree as the target (its .git is a file, not a directory) installs like a normal checkout.
 worktree_one() {
   local tmp="$1"
@@ -149,6 +195,10 @@ for os in linux windows; do
   ( keep_harness_one "$os" "$tmp/repo" ) || { echo "FAILED: keep-harness os=$os"; fail=1; }
   rm -rf "$tmp"
 done
+echo "=== migrate through install.sh"
+tmp="$(mktemp -d)"
+( migrate_one "$tmp" ) || { echo "FAILED: migrate through install.sh"; fail=1; }
+rm -rf "$tmp"
 for repo in "${repos[@]}"; do
   for os in linux windows; do
     for assistant_dir in "$root"/template/assistant/*/; do
